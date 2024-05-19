@@ -5,3 +5,4 @@ tiktoken
 pdfreader
 python-docx
 requests-toolbelt
+PyPDF2
