@@ -1,2 +1,2 @@
-streamlit_js_eval
 extra_streamlit_components
+requests_toolbelt
