@@ -47,21 +47,24 @@ st.markdown(hide_streamlit_style, unsafe_allow_html=True)
 # Custom CSS to change link appearance to a white filled box with a black number index
 custom_css = """
     <style>
-    a {
-        background-color: white;
-        color: black !important;
-        display: inline-block;
-        border-radius: 5px;
-        padding: 2px 5px; /* Adjust padding */
-        text-decoration: none;
-        position: relative;
-        top: -2px; /* Adjust based on your needs */
-        font-size: 80%; /* Scale down the text size if necessary */
-    }
-    a:hover {
-        background-color: #f0f0f0;
-    }
-    </style>
+    <style>
+a {
+    background-color: white;
+    color: black !important;
+    display: inline-block;
+    border-radius: 5px;
+    padding: 5px;                  /* Adjusted padding to make it uniform */
+    text-decoration: none;
+    position: relative;
+    top: -2px;                    /* Adjust based on your needs */
+    line-height: 1;               /* Ensures text is vertically centered */
+    height: 20px;                 /* Fixed height for consistent sizing */
+    width: 20px;                  /* Fixed width for consistent sizing */
+}
+a:hover {
+    background-color: #f0f0f0;
+}
+</style>
 """
 
 # Embed the custom CSS into the Streamlit app
