@@ -58,6 +58,10 @@ class Chatbot:
             generated_query = generate_search_query(message, chat_history)
             if generated_query != "CANCEL_WEBSEARCH":
                 queries = generated_query.strip().split('\n')
+                site = st.session_state.get("site_input", "").strip()
+                if site:
+                    queries = [f"site:{site} {query}" for query in queries]
+
                 scraped_results_json = scrape_and_process_results(queries, 3)  # Scrape top 3 results for each query
 
                 current_time = datetime.datetime.now(datetime.timezone.utc).strftime("%a, %d %b %Y, %H:%M:%S UTC")
@@ -424,7 +428,7 @@ def generate_search_query(query, chat_history):
 - The date and time is {current_time}.
 - Do not generate any other texts or messages other than the search queries, do not engage in a conversation. You are not a chatbot, an AI, an assistant or any other form. (IMPORTANT). NEVER EVER SAY ANYTHING ELSE, OTHER THAN THE SEARCH QUERY. YOU ARE NOT A CHATBOT OR AN ASSISTANT. YOU ARE A QUERY GENERATION SYSTEM.
 
-## You are a query generation system designed solely to provide relevant search queries based on the user's input. If the input does not require up-to-date information or refers to something beyond your knowledge base, you may generate 1-3 focused search queries separated by newlines when needed. Your knowledge cutoff date is August 2023.
+## You are a query generation system designed solely to provide relevant search queries based on the user's input. If the input does not require up-to-date information or refers to something that refers to something beyond your knowledge base, you may generate 1-3 focused search queries separated by newlines when needed. Your knowledge cutoff date is August 2023.
 
 ## If the input is a casual conversation, a statement, an opinion, a thank you message, or any other input that does not require a factual search query response, you must respond with "c". Do not attempt to engage in conversation or provide any other responses.
 
@@ -674,6 +678,9 @@ def main_ui():
 
                 websearch = st.checkbox("Web Search", value=True)
 
+                # Add Site input field
+                site = st.text_input("Site", placeholder="site.com", key="site_input")
+
                 available_models = list(MODEL_CONTEXT_LIMITS.keys())
                 selected_model = st.selectbox("Choose Model", available_models, index=available_models.index("gpt-4o"), disabled=st.session_state.is_processing)
                 st.session_state.selected_model = selected_model  # Store the selected model in session state
@@ -729,6 +736,9 @@ def main_ui():
                 generated_query = generate_search_query(content_to_send, st.session_state.conversations[current_conversation])
                 if websearch and generated_query and generated_query != "CANCEL_WEBSEARCH":
                     queries = generated_query.strip().split('\n')
+                    site = st.session_state.get("site_input", "").strip()
+                    if site:
+                        queries = [f"site:{site} {query}" for query in queries]
                     for query in queries:
                         st.write(f"Searching for {query}")
 
