@@ -611,6 +611,7 @@ def create_new_conversation():
     st.session_state.current_conversation = new_chat_name
     save_and_rerun()
 
+# Add the "site" text input field below the "Web search" checkbox
 def main_ui():
     if st.session_state.username is None:
         tab1, tab2 = st.tabs(["Login", "Signup"])
@@ -627,7 +628,6 @@ def main_ui():
                 st.text_input("Password", type="password", key="password_signup")
                 st.form_submit_button("Sign up", on_click=signup)
     else:
-        # Automatically create a "New Chat" if there are no existing conversations
         if not st.session_state.conversations:
             create_new_conversation()
         current_conversation = st.session_state.current_conversation
@@ -640,7 +640,6 @@ def main_ui():
                 st.session_state.current_conversation = None
                 current_conversation = None
 
-        # Sidebar
         with st.sidebar:
             st.header(f"Welcome to Lumiere, {st.session_state.username}.")
 
@@ -673,10 +672,14 @@ def main_ui():
                 st.header("Settings")
 
                 websearch = st.checkbox("Web Search", value=True)
+                st.session_state.websearch = websearch  # Store the websearch state in session state
+
+                site = st.text_input("Site", key="site_input")
+                st.session_state.site = site  # Store the site input in session state
 
                 available_models = list(MODEL_CONTEXT_LIMITS.keys())
                 selected_model = st.selectbox("Choose Model", available_models, index=available_models.index("gpt-4o"), disabled=st.session_state.is_processing)
-                st.session_state.selected_model = selected_model  # Store the selected model in session state
+                st.session_state.selected_model = selected_model
 
                 temperature = st.slider("Temperature", 0.0, 1.0, 1.0, step=0.1, disabled=st.session_state.is_processing)
                 max_tokens = st.slider("Max Tokens", 100, 4096, 4096, step=100, disabled=st.session_state.is_processing)
@@ -701,7 +704,6 @@ def main_ui():
                 else:
                     st.session_state.is_processing = True
 
-                    # Generate title for the first user message in a new chat
                     if current_conversation == "New Chat":
                         title = generate_title(user_input)
                         st.session_state.conversations[title] = st.session_state.conversations.pop(current_conversation)
@@ -727,9 +729,12 @@ def main_ui():
                     content_to_send = ""
 
                 generated_query = generate_search_query(content_to_send, st.session_state.conversations[current_conversation])
-                if websearch and generated_query and generated_query != "CANCEL_WEBSEARCH":
+
+                if st.session_state.websearch and generated_query and generated_query != "CANCEL_WEBSEARCH":
                     queries = generated_query.strip().split('\n')
                     for query in queries:
+                        if st.session_state.site:
+                            query = f"site:{st.session_state.site} {query}"
                         st.write(f"Searching for {query}")
 
                 with st.chat_message("assistant", avatar="https://i.ibb.co/4PbTLG9/20240531-141431.jpg"):
@@ -737,8 +742,8 @@ def main_ui():
                     response_text = ""
                     typing_indicator = " |"
 
-                    for chunk in chatbot.send_message(st.session_state.conversations[current_conversation], content_to_send, websearch=websearch):
-                        response_text = chunk.replace(typing_indicator, "")  # Temporary display without indicator
+                    for chunk in chatbot.send_message(st.session_state.conversations[current_conversation], content_to_send, websearch=st.session_state.websearch):
+                        response_text = chunk.replace(typing_indicator, "")
                         response_placeholder.markdown(response_text + typing_indicator, unsafe_allow_html=True)
 
                     response_placeholder.markdown(response_text, unsafe_allow_html=True)
@@ -747,5 +752,4 @@ def main_ui():
                 st.session_state.all_conversations[st.session_state.username] = st.session_state.conversations
                 save_and_rerun()
 
-# Run the main UI
 main_ui()
