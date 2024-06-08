@@ -611,6 +611,7 @@ def create_new_conversation():
     st.session_state.current_conversation = new_chat_name
     save_and_rerun()
 
+# Modified main_ui function to accommodate the changes
 def main_ui():
     if st.session_state.username is None:
         tab1, tab2 = st.tabs(["Login", "Signup"])
@@ -673,7 +674,7 @@ def main_ui():
                 websearch = st.checkbox("Web Search", value=True)
                 st.session_state.websearch = websearch  # Store the websearch state in session state
 
-                site = st.text_input("Site", key="site_input")
+                site = st.text_input("Site", key="site_input", placeholder="site.com")
                 st.session_state.site = site  # Store the site input in session state
 
                 available_models = list(MODEL_CONTEXT_LIMITS.keys())
@@ -732,12 +733,13 @@ def main_ui():
                 if st.session_state.websearch and generated_query and generated_query != "CANCEL_WEBSEARCH":
                     queries = generated_query.strip().split('\n')
                     for query in queries:
-                        # Store the original query for display purposes
-                        display_query = query
                         if st.session_state.site:
                             # Append site:sitehere.com internally for actual search
+                            display_query = query
                             query = f"site:{st.session_state.site} {query}"
-                        st.write(f"Searching for {display_query}")
+                            st.write(f"Searching for {display_query}")
+                        else:
+                            st.write(f"Searching for {query}")
 
                 with st.chat_message("assistant", avatar="https://i.ibb.co/4PbTLG9/20240531-141431.jpg"):
                     response_placeholder = st.empty()
