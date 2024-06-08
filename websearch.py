@@ -679,7 +679,7 @@ def main_ui():
                 websearch = st.checkbox("Web Search", value=True)
 
                 # Add Site input field
-                site = st.text_input("Site", placeholder="site.com", key="site_input")
+                site = st.text_input("Site", placeholder="stackoverflow.com", key="site_input")
 
                 available_models = list(MODEL_CONTEXT_LIMITS.keys())
                 selected_model = st.selectbox("Choose Model", available_models, index=available_models.index("gpt-4o"), disabled=st.session_state.is_processing)
