@@ -51,11 +51,12 @@ custom_css = """
         background-color: white;
         color: black !important;
         display: inline-block;
-        border-radius: 0px;
-        padding: 5px 10px;
+        border-radius: 5px;
+        padding: 2px 5px; /* Adjust padding */
         text-decoration: none;
         position: relative;
         top: -2px; /* Adjust based on your needs */
+        font-size: 80%; /* Scale down the text size if necessary */
     }
     a:hover {
         background-color: #f0f0f0;
