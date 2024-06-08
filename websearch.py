@@ -611,7 +611,6 @@ def create_new_conversation():
     st.session_state.current_conversation = new_chat_name
     save_and_rerun()
 
-# Add the "site" text input field below the "Web search" checkbox
 def main_ui():
     if st.session_state.username is None:
         tab1, tab2 = st.tabs(["Login", "Signup"])
@@ -733,9 +732,12 @@ def main_ui():
                 if st.session_state.websearch and generated_query and generated_query != "CANCEL_WEBSEARCH":
                     queries = generated_query.strip().split('\n')
                     for query in queries:
+                        # Store the original query for display purposes
+                        display_query = query
                         if st.session_state.site:
+                            # Append site:sitehere.com internally for actual search
                             query = f"site:{st.session_state.site} {query}"
-                        st.write(f"Searching for {query}")
+                        st.write(f"Searching for {display_query}")
 
                 with st.chat_message("assistant", avatar="https://i.ibb.co/4PbTLG9/20240531-141431.jpg"):
                     response_placeholder = st.empty()
