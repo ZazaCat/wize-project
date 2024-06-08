@@ -44,7 +44,6 @@ hide_streamlit_style = """
     """
 st.markdown(hide_streamlit_style, unsafe_allow_html=True)
 
-# Custom CSS to change link appearance to a white filled box with a black number index
 # Custom CSS to change link appearance to a gray filled circle with white text
 custom_css = """
     <style>
@@ -53,14 +52,15 @@ custom_css = """
         color: white !important;
         display: inline-block;
         border-radius: 50%; /* This makes it a circle */
-        padding: 10px;
+        padding: 5px; /* Reduce padding to make the circle smaller */
         text-decoration: none;
-        width: 40px;
-        height: 40px;
+        width: 25px;
+        height: 25px;
         text-align: center;
-        line-height: 20px; /* Adjust based on your needs */
+        line-height: 14px; /* Adjust based on your needs */
         vertical-align: middle;
-        margin: 5px; /* Adjust based on your needs */
+        font-size: 12px; /* Adjust font size if needed */
+        margin: 2px; /* Adjust based on your needs */
     }
     a:hover {
         background-color: darkgray;
