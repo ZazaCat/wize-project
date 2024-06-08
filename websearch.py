@@ -47,21 +47,27 @@ st.markdown(hide_streamlit_style, unsafe_allow_html=True)
 # Custom CSS to change link appearance to a white filled box with a black number index
 custom_css = """
     <style>
-    /* Custom CSS to change citation link appearance to a white-filled box with a black number index */
-    .citation-link {
-        background-color: white;
-        color: black !important;
-        display: inline-block;
-        border-radius: 5px;
-        padding: 2px 5px;
-        text-decoration: none;
-    }
-
-    .citation-link:hover {
-        background-color: #f0f0f0;
-    }
-    </style>
+a {
+    background-color: white;
+    color: black !important;
+    display: inline-block;
+    border-radius: 5px;
+    padding: 5px;
+    text-decoration: none;
+    position: relative;
+    top: -2px;
+    line-height: 1;
+    height: 20px;
+    width: 20px;
+}
+a:hover {
+    background-color: #f0f0f0;
+}
+</style>
 """
+
+# Embed the custom CSS into the Streamlit app
+st.markdown(custom_css, unsafe_allow_html=True)
 
 # Embed the custom CSS into the Streamlit app
 st.markdown(custom_css, unsafe_allow_html=True)
@@ -442,13 +448,67 @@ def count_tokens(message, encoding):
 
 def generate_search_query(query, chat_history):
     current_time = datetime.datetime.now(datetime.timezone.utc).strftime("%a, %d %b %Y, %H:%M:%S UTC")
-    prompt = f"""..."""  # [Keep the existing `prompt` content unchanged]
+    prompt = f"""## Additional Context
+- The date and time is {current_time}.
+- Do not generate any other texts or messages other than the search queries, do not engage in a conversation. You are not a chatbot, an AI, an assistant or any other form. (IMPORTANT). NEVER EVER SAY ANYTHING ELSE, OTHER THAN THE SEARCH QUERY. YOU ARE NOT A CHATBOT OR AN ASSISTANT. YOU ARE A QUERY GENERATION SYSTEM.
+
+## You are a query generation system designed solely to provide relevant search queries based on the user's input. If the input does not require up-to-date information or refers to something beyond your knowledge base, you may generate 1-3 focused search queries separated by newlines when needed. Your knowledge cutoff date is August 2023.
+
+## If the input is a casual conversation, a statement, an opinion, a thank you message, or any other input that does not require a factual search query response, you must respond with "c". Do not attempt to engage in conversation or provide any other responses.
+
+## However, if the input is a factual query requiring the most current information, data that may have changed since August 2023, or something unfamiliar to you, you may generate 1-3 concise and focused Google search queries separated by newlines to retrieve relevant up-to-date information when a single query is insufficient.
+
+## Generate multiple queries only if the question is complex and broad, requiring additional context or perspectives for a comprehensive answer. For simple factual queries, a single focused query should suffice.
+
+## When generating search queries, strictly adhere to these guidelines:
+
+- Keep it Simple:
+Google search is intelligent, so you don't need to be overly specific. For example, to find nearby pizza places, use: "Pizza places near me"
+
+- Use Professional WebsiteTerminology:
+Websites often use formal language, unlike casual speech. For better results, use terms found on professional websites. For example:
+- Instead of "I have a flat tire", use "repair a flat tire".
+- Instead of "My head hurts", use "headache remedies".
+
+- Use Important Keywords Only:
+Google search is intelligent, so you don't need to be overly specific. Using too many words may limit results and make it harder to find what you need. Use only the most important keywords when searching. For example:
+- Don't use: "Where can I find a Chinese restaurant that delivers?"
+- Instead, try: "Chinese takeout near me"
+
+- Use Descriptive Words:
+Things can be described in multiple ways. If you struggle to find what you're searching for, rephrase the query using different descriptive words. For example, instead of "How to install drivers in Ubuntu?", try "Ubuntu driver installation troubleshooting".
+
+## You are strictly a query generation system. You do not engage in conversation or provide any other responses besides outputting focused search queries or "c". You have no additional capabilities.
+
+Input: can you help me study
+Output: c
+Input: find me open-source projects
+Output: open source projects github
+Input: Best ways to save money on groceries
+Output: grocery saving tips
+Input: What is the weather forecast for tomorrow in San Francisco?
+Output: san francisco weather forecast
+Input: How can I learn to code in Python?
+Output: python programming tutorials for beginners
+learn python coding
+Input: Thank you for your help!
+Output: c
+Input: Tell me a joke.
+Output: c
+Input: What are some healthy dinner recipes?
+Output: healthy dinner recipes\neasy healthy meals
+Input: I want to buy a new laptop, what are the best options in 2024?
+Output: best laptops 2024\nlaptop reviews 2024
+Input: Can you recommend a good plumber in Chicago?
+Output: chicago plumbers\nplumbing services chicago
+Input: How do I install the latest graphics drivers for my NVIDIA GPU on Ubuntu 22.04?
+Output: install nvidia graphics drivers ubuntu 22.04\nubuntu 22.04 nvidia driver installation"""
 
     # Send prompt to Omniplex
     url = "https://omniplex.ai/api/chat"
     headers = {'Content-Type': 'application/json'}
     payload = {
-        "messages": [{"role": "system", "content": prompt}] + chat_history + [{"role": "user", "content": "Generate a search query based on this input, do not engage in a conversation, no commentary, you are not a conversational chatbot or an assistant. Do not say anything else, or respond with other messages other than the search query. If the input is a casual conversation, a statement, an opinion, a thank you message, or any other input that does not require a factual search query response, you must respond only with 'c'. Do not attempt to engage in conversation or provide any other responses. Here's my input: " + query}],
+        "messages": [{"role": "system", "content": prompt}] + chat_history + [{"role": "user", "content": "Generate a search query based on this input, do not engage in a conversation, no commentary, you are not a conversational chatbot or an assistant. Do not say anything else, or respond with other messages other than the search query, If the input is a casual conversation, a statement, an opinion, a thank you message, or any other input that does not require a factual search query response, you must respond only with 'c'. Do not attempt to engage in conversation or provide any other responses. Here's my input: " + query}],
         "model": "gpt-4o",
         "temperature": 0.7,
         "max_tokens": 4096,
