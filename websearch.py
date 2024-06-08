@@ -740,7 +740,8 @@ def main_ui():
                     if site:
                         queries = [f"site:{site} {query}" for query in queries]
                     for query in queries:
-                        st.write(f"Searching for {query}")
+                        clean_query = query.replace(f"site:{site} ", "").strip()
+                        st.write(f"Searching for {clean_query}")
 
                 with st.chat_message("assistant", avatar="https://i.ibb.co/4PbTLG9/20240531-141431.jpg"):
                     response_placeholder = st.empty()
