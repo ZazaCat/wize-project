@@ -51,7 +51,7 @@ custom_css = """
         background-color: white;
         color: black !important;
         display: inline-block;
-        border-radius: 5px;
+        border-radius: 0px;
         padding: 5px 10px;
         text-decoration: none;
         position: relative;
