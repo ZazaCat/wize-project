@@ -44,11 +44,21 @@ hide_streamlit_style = """
     """
 st.markdown(hide_streamlit_style, unsafe_allow_html=True)
 
-# Custom CSS to change link color to white
+# Custom CSS to change link appearance to a white filled box with a black number index
 custom_css = """
     <style>
     a {
-        color: white !important;
+        background-color: white;
+        color: black !important;
+        display: inline-block;
+        border-radius: 5px;
+        padding: 5px 10px;
+        text-decoration: none;
+        position: relative;
+        top: -2px; /* Adjust based on your needs */
+    }
+    a:hover {
+        background-color: #f0f0f0;
     }
     </style>
 """
