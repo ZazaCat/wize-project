@@ -44,36 +44,6 @@ hide_streamlit_style = """
     """
 st.markdown(hide_streamlit_style, unsafe_allow_html=True)
 
-# Custom CSS to change link appearance to a gray filled circle with white text if the link contains a citation
-custom_css = """
-    <style>
-    a[href*="¹"], a[href*="²"], a[href*="³"] {
-        background-color: gray;
-        color: white !important;
-        display: inline-block;
-        border-radius: 50%; /* This makes it a circle */
-        padding: 1px; /* Minimize padding to make the circle smaller */
-        text-decoration: none;
-        width: 16px;
-        height: 16px;
-        text-align: center;
-        line-height: 14px; /* Adjust line-height to center the text */
-        vertical-align: middle;
-        font-size: 10px; /* Adjust font size if needed */
-        margin: 1px; /* Adjust based on your needs */
-        position: relative;
-    }
-    a[href*="¹"]:hover, a[href*="²"]:hover, a[href*="³"]:hover {
-        background-color: darkgray;
-    }
-    </style>
-"""
-
-# Embed the custom CSS into the Streamlit app
-st.markdown(custom_css, unsafe_allow_html=True)
-
-# Rest of your code...
-
 class Chatbot:
     def __init__(self):
         self.api_url = "https://omniplex.ai/api/chat"
@@ -95,9 +65,9 @@ class Chatbot:
 
                 message = f"""{message}
 
-Write an accurate answer concisely for a given question in English, always citing the search results. Your answer must be correct, high-quality, and written by an expert using an unbiased and journalistic tone. Always cite search results for your responses using hyperlinked superscript numbers of the index at the end of sentences when needed, for example "Ice is less dense than water.[¹](https://example.com/source1)" NO SPACE between the last word and the citation. Cite the most relevant results that answer the question. Avoid citing irrelevant results. Write only the response. Use markdown for formatting.
+Write an accurate answer concisely for a given question in English, always always citing the search results. Your answer must be correct, high-quality, and written by an expert using an unbiased and journalistic tone. Always cite search results for your responses using hyperlinked superscript numbers of the index at the end of sentences when needed, for example "Ice is less dense than water.[¹](https://example.com/source1)" NO SPACE between the last word and the citation. Cite the most relevant results that answer the question. Avoid citing irrelevant results. Write only the response. Use markdown for formatting.
 
-Use markdown to format paragraphs, lists, tables, and quotes whenever possible.
+Use markdown to format paragraphs, lists, tables, and quotes whenever possible. 
 Use markdown code blocks to write code, including the language for syntax highlighting.
 Use LaTeX to wrap ALL math expressions. Always use double dollar signs $$, for example $$E=mc^2$$.
 DO NOT include any URL's, only include hyperlinked citations with superscript numbers, e.g. [¹](https://example.com/source1)
@@ -383,7 +353,7 @@ def handle_file_upload():
                     return
 
                 if tokens > model_context_window:
-                    st.toast(f"[ERROR] File {uploaded_file.name} exceeds the token limit of {model_context_window} tokens.", icon="❌")
+                    st.toast(f"File {uploaded_file.name} exceeds the token limit of {model_context_window} tokens.", icon="❌")
                     st.session_state.is_processing = False
                     return
 
@@ -433,7 +403,7 @@ def handle_file_upload():
                     st.session_state.is_processing = False
                     save_and_rerun()
             else:
-                st.toast("Only text-based files and images files like .py, .txt, .json, .js, .jpg, .jpeg, .png, .pdf, .docx etc. are allowed.", icon="❌")
+                st.toast("Only text-based files and image files like .py, .txt, .json, .js, .jpg, .jpeg, .png, .pdf, .docx etc. are allowed.", icon="❌")
 
 def reset_current_conversation():
     st.session_state.conversations[st.session_state.current_conversation] = [{"role": "assistant", "content": "Hello! How can I help you today?"}]
@@ -591,11 +561,11 @@ def scrape_and_process_results(queries, max_results_per_query):
     all_results_json = []
     num_queries = len(queries)
     if num_queries == 3:
-        max_results_per_query = 2  # Top 2 results for each query if there are 3 queries
+        max_results_per_query = 2  # Top 1 result for each query if there are 3 queries
     elif num_queries == 2:
-        max_results_per_query = 3  # Top 3 results for each query if there are 2 queries
+        max_results_per_query = 3  # Top 2 results for each query if there are 2 queries
     else:
-        max_results_per_query = 4  # Top 4 results for a single query
+        max_results_per_query = 4  # Top 3 results for single query
 
     for query_idx, query in enumerate(queries):
         urls = omniplex_search(query)
@@ -717,8 +687,6 @@ def main_ui():
                 encoding = tiktoken.encoding_for_model(selected_model)
 
             st.button("Logout", on_click=logout)
-
-        # Prevent conversation rendering if there are no current conversations
         if current_conversation:
             st.title(f"{current_conversation or 'No Chat Selected'}")
             display_chat(current_conversation)
@@ -767,13 +735,12 @@ def main_ui():
                 with st.chat_message("assistant", avatar="https://i.ibb.co/4PbTLG9/20240531-141431.jpg"):
                     response_placeholder = st.empty()
                     response_text = ""
-                    typing_indicator = "|"
+                    typing_indicator = " |"
 
                     for chunk in chatbot.send_message(st.session_state.conversations[current_conversation], content_to_send, websearch=websearch):
                         response_text = chunk.replace(typing_indicator, "")  # Temporary display without indicator
                         response_placeholder.markdown(response_text + typing_indicator, unsafe_allow_html=True)
 
-                    response_placeholder.markdown(response_text + typing_indicator, unsafe_allow_html=True)
                     response_placeholder.markdown(response_text, unsafe_allow_html=True)
 
                 st.session_state.is_processing = False
