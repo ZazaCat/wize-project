@@ -44,33 +44,35 @@ hide_streamlit_style = """
     """
 st.markdown(hide_streamlit_style, unsafe_allow_html=True)
 
-# Custom CSS to change link appearance to a white filled box with a black number index
+# Custom CSS to change link appearance to a gray filled circle with white text
 custom_css = """
     <style>
-a {
-    background-color: white;
-    color: black !important;
-    display: inline-block;
-    border-radius: 5px;
-    padding: 5px;
-    text-decoration: none;
-    position: relative;
-    top: -2px;
-    line-height: 1;
-    height: 20px;
-    width: 20px;
-}
-a:hover {
-    background-color: #f0f0f0;
-}
-</style>
+    a {
+        background-color: gray;
+        color: white !important;
+        display: inline-block;
+        border-radius: 50%; /* This makes it a circle */
+        padding: 1px; /* Minimize padding to make the circle smaller */
+        text-decoration: none;
+        width: 16px;
+        height: 16px;
+        text-align: center;
+        line-height: 14px; /* Adjust line-height to center the text */
+        vertical-align: middle;
+        font-size: 10px; /* Adjust font size if needed */
+        margin: 1px; /* Adjust based on your needs */
+        position: relative;
+    }
+    a:hover {
+        background-color: darkgray;
+    }
+    </style>
 """
 
 # Embed the custom CSS into the Streamlit app
 st.markdown(custom_css, unsafe_allow_html=True)
 
-# Embed the custom CSS into the Streamlit app
-st.markdown(custom_css, unsafe_allow_html=True)
+# Rest of your code...
 
 class Chatbot:
     def __init__(self):
