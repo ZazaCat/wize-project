@@ -674,8 +674,6 @@ def main_ui():
                             save_and_rerun()
 
             with st.expander("Settings"):
-                st.header("Settings")
-
                 websearch = st.checkbox("Web Search", value=True)
 
                 # Add Site input field
