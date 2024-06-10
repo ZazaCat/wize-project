@@ -56,12 +56,6 @@ By contributing to this project, you agree to abide by the following Code of Con
 2. Do not use this code for illegal or unethical purposes.
 3. Report any security vulnerabilities to the repository owner.
 
-## Security
-To ensure the security of this project, please adhere to the following guidelines:
-1. Do not share or disclose sensitive information such as API keys or passwords.
-2. Report any security issues or vulnerabilities immediately.
-3. Do not use this code in environments where it can cause harm.
-
 ## Contributions
 We welcome contributions to this project. Please make sure to follow our Code of Conduct and security guidelines. Submit your contributions via pull requests and include a detailed explanation of your changes.
 
