@@ -15,6 +15,7 @@ import docx
 import tiktoken
 from bs4 import BeautifulSoup
 from requests.utils import default_headers
+import sqlite3
 
 INITIAL_MESSAGE = {"role": "assistant", "content": "Hello! How can I help you today?"}
 
@@ -109,45 +110,123 @@ ONLY cite sources from search results below. DO NOT add any other links other th
         else:
             yield f"Error: {response.status_code}"
 
-# File path for storing the conversation data
-DATA_FILE = "conversations.json"
+DATABASE_FILE = "lumiere.db"
 
 def get_manager():
     return stx.CookieManager()
 
 cookie_manager = get_manager()
 
-def save_data(users, all_conversations):
-    try:
-        with open(DATA_FILE, "w") as file:
-            json.dump({"users": users, "conversations": all_conversations}, file)
-    except IOError as e:
-        st.toast(f"Failed to save data: {e}", icon="❌")
+def save_data(users, all_conversations, settings):
+    conn = sqlite3.connect(DATABASE_FILE)
+    c = conn.cursor()
+
+    # Save users
+    c.execute("DELETE FROM users")
+    for username, password in users.items():
+        c.execute("INSERT INTO users (username, password) VALUES (?,?)", (username, password))
+
+    # Save conversations
+    c.execute("DELETE FROM conversations")
+    for username, conversations in all_conversations.items():
+        for conv_name, messages in conversations.items():
+            json_messages = json.dumps(messages)
+            c.execute("INSERT INTO conversations (username, conv_name, messages) VALUES (?,?,?)", (username, conv_name, json_messages))
+
+    # Save settings
+    c.execute("DELETE FROM settings")
+    settings_json = json.dumps(settings)
+    c.execute("INSERT INTO settings (settings) VALUES (?)", (settings_json,))
+
+    conn.commit()
+    conn.close()
 
 def load_data():
-    if os.path.exists(DATA_FILE):
-        try:
-            with open(DATA_FILE, "r") as file:
-                data = json.load(file)
-                if isinstance(data, dict):
-                    return data.get("users", {}), data.get("conversations", {})
-                else:
-                    raise json.JSONDecodeError("Not a dictionary", "", 0)
-        except (json.JSONDecodeError, IOError) as e:
-            st.toast(f"Error loading conversations or initializing with default: {e}", icon="❌")
-            return {}, {}
-    else:
-        return {}, {}
+    users = {}
+    all_conversations = {}
+    settings = {}
+
+    conn = sqlite3.connect(DATABASE_FILE)
+    c = conn.cursor()
+
+    # Load users
+    c.execute("SELECT username, password FROM users")
+    for row in c.fetchall():
+        users[row[0]] = row[1]
+
+    # Load conversations
+    c.execute("SELECT username, conv_name, messages FROM conversations")
+    for row in c.fetchall():
+        if row[0] not in all_conversations:
+            all_conversations[row[0]] = {}
+        all_conversations[row[0]][row[1]] = json.loads(row[2])
+
+    # Load settings
+    c.execute("SELECT settings FROM settings")
+    row = c.fetchone()
+    if row:
+        settings = json.loads(row[0])
+
+    conn.close()
+    return users, all_conversations, settings
+
+def initialize_db():
+    conn = sqlite3.connect(DATABASE_FILE)
+    c = conn.cursor()
+
+    c.execute("""
+    CREATE TABLE IF NOT EXISTS users (
+        username TEXT PRIMARY KEY,
+        password TEXT NOT NULL
+    )
+    """)
+
+    c.execute("""
+    CREATE TABLE IF NOT EXISTS conversations (
+        username TEXT NOT NULL,
+        conv_name TEXT NOT NULL,
+        messages TEXT NOT NULL,
+        PRIMARY KEY(username, conv_name)
+    )
+    """)
+
+    c.execute("""
+    CREATE TABLE IF NOT EXISTS settings (
+        settings TEXT NOT NULL
+    )
+    """)
+
+    conn.commit()
+    conn.close()
+
+initialize_db()
 
 def initialize_session_state():
     if "is_processing" not in st.session_state:
         st.session_state.is_processing = False
     if "username" not in st.session_state:
         st.session_state.username = None
-    if "users" not in st.session_state or "all_conversations" not in st.session_state:
-        users, all_conversations = load_data()
+    if "users" not in st.session_state or "all_conversations" not in st.session_state or "settings" not in st.session_state:
+        users, all_conversations, settings = load_data()
         st.session_state.users = users
         st.session_state.all_conversations = all_conversations
+        st.session_state.settings = settings
+
+    # Apply settings if they are available
+    if "site_input" in st.session_state.settings:
+        st.session_state.site_input = st.session_state.settings["site_input"]
+    if "selected_model" in st.session_state.settings:
+        st.session_state.selected_model = st.session_state.settings["selected_model"]
+    if "temperature" in st.session_state.settings:
+        st.session_state.temperature = st.session_state.settings["temperature"]
+    if "max_tokens" in st.session_state.settings:
+        st.session_state.max_tokens = st.session_state.settings["max_tokens"]
+    if "top_p" in st.session_state.settings:
+        st.session_state.top_p = st.session_state.settings["top_p"]
+    if "system_prompt" in st.session_state.settings:
+        st.session_state.system_prompt = st.session_state.settings["system_prompt"]
+    if "websearch" in st.session_state.settings:
+        st.session_state.websearch = st.session_state.settings["websearch"]
 
     # Check for cookies
     username_cookie = cookie_manager.get(cookie="username")
@@ -211,7 +290,16 @@ def display_chat(conversation_name):
                 st.markdown(message["content"])
 
 def save_and_rerun():
-    save_data(st.session_state.users, st.session_state.all_conversations)
+    settings = {
+        "site_input": st.session_state.site_input,
+        "selected_model": st.session_state.selected_model,
+        "temperature": st.session_state.temperature,
+        "max_tokens": st.session_state.max_tokens,
+        "top_p": st.session_state.top_p,
+        "system_prompt": st.session_state.system_prompt,
+        "websearch": st.session_state.websearch,
+    }
+    save_data(st.session_state.users, st.session_state.all_conversations, settings)
     st.rerun()
 
 def login():
@@ -382,6 +470,8 @@ def handle_file_upload():
 
                 # Compress image if necessary
                 file_contents = compress_image(io.BytesIO(file_contents))
+
+                send_image_multipart(uploaded_file.name, file_contents)
 
                 send_image_multipart(uploaded_file.name, file_contents)
 
