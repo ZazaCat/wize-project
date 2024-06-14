@@ -15,9 +15,11 @@ import docx
 import tiktoken
 from bs4 import BeautifulSoup
 from requests.utils import default_headers
+import sqlite3
 
 INITIAL_MESSAGE = {"role": "assistant", "content": "Hello! How can I help you today?"}
 
+# Define context window limits for models
 MODEL_CONTEXT_LIMITS = {
     "gpt-4o": 128000,
     "gpt-4-turbo-2024-04-09": 128000,
@@ -26,15 +28,17 @@ MODEL_CONTEXT_LIMITS = {
     "gpt-3.5-turbo": 16384,
 }
 
+# Streamlit page config
 st.set_page_config(
     page_title="Lumiere",
     page_icon="🐈‍⬛",
     layout="wide",
 )
 
+# Hide main menu and footer
 hide_streamlit_style = """
     <style>
-
+    #MainMenu {visibility: hidden;}
     footer {visibility: hidden;}
     header {visibility: hidden;}
     </style>
@@ -59,7 +63,7 @@ class Chatbot:
                 if site:
                     queries = [f"site:{site} {query}" for query in queries]
 
-                scraped_results_json = scrape_and_process_results(queries, 3)  
+                scraped_results_json = scrape_and_process_results(queries, 3)  # Scrape top 3 results for each query
 
                 current_time = datetime.datetime.now(datetime.timezone.utc).strftime("%a, %d %b %Y, %H:%M:%S UTC")
                 user_name = st.session_state.username
@@ -73,7 +77,7 @@ Use markdown code blocks to write code, including the language for syntax highli
 Use LaTeX to wrap ALL math expressions. Always use double dollar signs $$, for example $$E=mc^2$$.
 DO NOT include any URL's, only include hyperlinked citations with superscript numbers, e.g. [¹](https://example.com/source1)
 DO NOT include references (URL's at the end, sources).
-Use hyperlinked footnote citations at the end of applicable sentences (e.g, [¹](https:
+Use hyperlinked footnote citations at the end of applicable sentences (e.g, [¹](https://example.com/source1)[²](https://example.com/source2)).
 Write more than 100 words (2 paragraphs).
 ALWAYS use the exact cite format provided.
 ONLY cite sources from search results below. DO NOT add any other links other than the search results below
@@ -100,59 +104,141 @@ ONLY cite sources from search results below. DO NOT add any other links other th
                 if chunk:
                     chunk_str = chunk.decode("utf-8")
                     response_text += chunk_str
-                    yield response_text + typing_indicator  
+                    yield response_text + typing_indicator  # Include typing indicator
             chat_history.append({"role": "assistant", "content": response_text})
             return chat_history
         else:
             yield f"Error: {response.status_code}"
 
-DATA_FILE = "conversations.json"
+DATABASE_FILE = "lumiere.db"
 
 def get_manager():
     return stx.CookieManager()
 
 cookie_manager = get_manager()
 
-def save_data(users, all_conversations):
-    try:
-        with open(DATA_FILE, "w") as file:
-            json.dump({"users": users, "conversations": all_conversations}, file)
-    except IOError as e:
-        st.toast(f"Failed to save data: {e}", icon="❌")
+def save_data(users, all_conversations, settings):
+    conn = sqlite3.connect(DATABASE_FILE)
+    c = conn.cursor()
+
+    # Save users
+    c.execute("DELETE FROM users")
+    for username, password in users.items():
+        c.execute("INSERT INTO users (username, password) VALUES (?,?)", (username, password))
+
+    # Save conversations
+    c.execute("DELETE FROM conversations")
+    for username, conversations in all_conversations.items():
+        for conv_name, messages in conversations.items():
+            json_messages = json.dumps(messages)
+            c.execute("INSERT INTO conversations (username, conv_name, messages) VALUES (?,?,?)", (username, conv_name, json_messages))
+
+    # Save settings
+    c.execute("DELETE FROM settings")
+    settings_json = json.dumps(settings)
+    c.execute("INSERT INTO settings (settings) VALUES (?)", (settings_json,))
+
+    conn.commit()
+    conn.close()
 
 def load_data():
-    if os.path.exists(DATA_FILE):
-        try:
-            with open(DATA_FILE, "r") as file:
-                data = json.load(file)
-                if isinstance(data, dict):
-                    return data.get("users", {}), data.get("conversations", {})
-                else:
-                    raise json.JSONDecodeError("Not a dictionary", "", 0)
-        except (json.JSONDecodeError, IOError) as e:
-            st.toast(f"Error loading conversations or initializing with default: {e}", icon="❌")
-            return {}, {}
-    else:
-        return {}, {}
+    users = {}
+    all_conversations = {}
+    settings = {}
+
+    conn = sqlite3.connect(DATABASE_FILE)
+    c = conn.cursor()
+
+    # Load users
+    c.execute("SELECT username, password FROM users")
+    for row in c.fetchall():
+        users[row[0]] = row[1]
+
+    # Load conversations
+    c.execute("SELECT username, conv_name, messages FROM conversations")
+    for row in c.fetchall():
+        if row[0] not in all_conversations:
+            all_conversations[row[0]] = {}
+        all_conversations[row[0]][row[1]] = json.loads(row[2])
+
+    # Load settings
+    c.execute("SELECT settings FROM settings")
+    row = c.fetchone()
+    if row:
+        settings = json.loads(row[0])
+
+    conn.close()
+    return users, all_conversations, settings
+
+def initialize_db():
+    conn = sqlite3.connect(DATABASE_FILE)
+    c = conn.cursor()
+
+    c.execute("""
+    CREATE TABLE IF NOT EXISTS users (
+        username TEXT PRIMARY KEY,
+        password TEXT NOT NULL
+    )
+    """)
+
+    c.execute("""
+    CREATE TABLE IF NOT EXISTS conversations (
+        username TEXT NOT NULL,
+        conv_name TEXT NOT NULL,
+        messages TEXT NOT NULL,
+        PRIMARY KEY(username, conv_name)
+    )
+    """)
+
+    c.execute("""
+    CREATE TABLE IF NOT EXISTS settings (
+        settings TEXT NOT NULL
+    )
+    """)
+
+    conn.commit()
+    conn.close()
+
+initialize_db()
 
 def initialize_session_state():
     if "is_processing" not in st.session_state:
         st.session_state.is_processing = False
     if "username" not in st.session_state:
         st.session_state.username = None
-    if "users" not in st.session_state or "all_conversations" not in st.session_state:
-        users, all_conversations = load_data()
+    if "users" not in st.session_state or "all_conversations" not in st.session_state or "settings" not in st.session_state:
+        users, all_conversations, settings = load_data()
         st.session_state.users = users
         st.session_state.all_conversations = all_conversations
+        st.session_state.settings = settings
 
+    # Apply settings if they are available
+    if "site_input" in st.session_state.settings:
+        st.session_state.site_input = st.session_state.settings["site_input"]
+    if "selected_model" in st.session_state.settings:
+        st.session_state.selected_model = st.session_state.settings["selected_model"]
+    if "temperature" in st.session_state.settings:
+        st.session_state.temperature = st.session_state.settings["temperature"]
+    if "max_tokens" in st.session_state.settings:
+        st.session_state.max_tokens = st.session_state.settings["max_tokens"]
+    if "top_p" in st.session_state.settings:
+        st.session_state.top_p = st.session_state.settings["top_p"]
+    if "system_prompt" in st.session_state.settings:
+        st.session_state.system_prompt = st.session_state.settings["system_prompt"]
+    if "websearch" in st.session_state.settings:
+        st.session_state.websearch = st.session_state.settings["websearch"]
+
+    # Check for cookies
     username_cookie = cookie_manager.get(cookie="username")
     if username_cookie:
         st.session_state.username = username_cookie
 
+    # Initialize the conversations for the logged-in user
     if st.session_state.username:
         if "conversations" not in st.session_state:
             st.session_state.conversations = st.session_state.all_conversations.get(st.session_state.username, {})
 
+        # Set current conversation to the most recent one if not already set or if it doesn't exist
         if "current_conversation" not in st.session_state or not st.session_state.current_conversation:
             if st.session_state.conversations:
                 most_recent_convo = sorted(st.session_state.conversations.keys())[-1]
@@ -164,7 +250,7 @@ def extract_text_from_pdf(pdf_bytes):
     reader = PdfReader(io.BytesIO(pdf_bytes))
     text = ""
     for page in reader.pages:
-        text += page.extract_text()  
+        text += page.extract_text()  # Use the extract_text method from PdfReader
     return text
 
 def extract_text_from_docx(docx_bytes):
@@ -194,7 +280,7 @@ def display_chat(conversation_name):
                     st.text(message["file_contents"])
             elif "images" in message:
                 for image in message["images"]:
-
+                    # Safely decode and display the base64 image
                     try:
                         image_data = image.split(",")[1]
                         st.image(base64.b64decode(image_data), caption="Uploaded Image")
@@ -204,7 +290,16 @@ def display_chat(conversation_name):
                 st.markdown(message["content"])
 
 def save_and_rerun():
-    save_data(st.session_state.users, st.session_state.all_conversations)
+    settings = {
+        "site_input": st.session_state.site_input,
+        "selected_model": st.session_state.selected_model,
+        "temperature": st.session_state.temperature,
+        "max_tokens": st.session_state.max_tokens,
+        "top_p": st.session_state.top_p,
+        "system_prompt": st.session_state.system_prompt,
+        "websearch": st.session_state.websearch,
+    }
+    save_data(st.session_state.users, st.session_state.all_conversations, settings)
     st.rerun()
 
 def login():
@@ -214,12 +309,13 @@ def login():
     if username in st.session_state.users and st.session_state.users[username] == password:
         st.session_state.username = username
 
+        # Set cookies
         cookie_manager.set("username", username, expires_at=datetime.datetime.now() + datetime.timedelta(days=30))
 
         if username not in st.session_state.all_conversations:
             st.session_state.all_conversations[username] = {}
         st.session_state.conversations = st.session_state.all_conversations[username]
-        create_new_conversation()  
+        create_new_conversation()  # Create new conversation upon login
     else:
         st.toast("Invalid username or password", icon="❌")
 
@@ -230,12 +326,13 @@ def signup():
     if username not in st.session_state.users:
         st.session_state.users[username] = password
 
+        # Set cookies
         cookie_manager.set("username", username, expires_at=datetime.datetime.now() + datetime.timedelta(days=30))
 
         st.session_state.all_conversations[username] = {}
         st.session_state.username = username
         st.session_state.conversations = st.session_state.all_conversations[username]
-        create_new_conversation()  
+        create_new_conversation()  # Create new conversation upon signup
     else:
         st.toast("Username already taken", icon="❌")
 
@@ -251,16 +348,19 @@ def delete_cookies_script():
     """
 
 def logout():
-
+    # Clear session state related to user information and chat
     keys_to_clear = ["username", "current_conversation", "is_processing", "conversations"]
     for key in keys_to_clear:
         if key in st.session_state:
             del st.session_state[key]
 
+    # Attempt to delete the cookie using a script
     components.html(delete_cookies_script())
 
+    # Optional: Stop further execution to allow page reload
     st.stop()
 
+    # Debug logging
     st.write("Logging out: session state and cookies should be cleared now.")
     st.rerun()
 
@@ -314,6 +414,7 @@ def handle_file_upload():
     if uploaded_files:
         st.session_state.is_processing = True
 
+        # Define encoding using tiktoken
         encoding = tiktoken.encoding_for_model(selected_model)
 
         for uploaded_file in uploaded_files:
@@ -328,7 +429,7 @@ def handle_file_upload():
             valid_image_extensions = ["jpg", "jpeg", "png"]
 
             if any(filename.endswith(ext) for ext in valid_text_extensions):
-
+                # Extract text based on file type
                 if filename.endswith(".pdf"):
                     extracted_text = extract_text_from_pdf(file_contents)
                 elif filename.endswith(".docx"):
@@ -360,14 +461,17 @@ def handle_file_upload():
                 save_and_rerun()
 
             elif any(filename.endswith(ext) for ext in valid_image_extensions):
-
+                # Only allow image uploads for models that support image input
                 allowed_models = {"gpt-4o", "gpt-4", "gpt-4-turbo", "gpt-4-turbo-2024-04-09"}
                 if selected_model not in allowed_models:
                     st.toast("Image uploads are only supported by models that accept image inputs.", icon="⚠️")
                     st.session_state.is_processing = False
                     return
 
+                # Compress image if necessary
                 file_contents = compress_image(io.BytesIO(file_contents))
+
+                send_image_multipart(uploaded_file.name, file_contents)
 
                 send_image_multipart(uploaded_file.name, file_contents)
 
@@ -401,18 +505,28 @@ def reset_current_conversation():
     save_and_rerun()
 
 def count_tokens(message, encoding):
-
+    # Handle special tokens by allowing them
     try:
         return len(encoding.encode(message, disallowed_special=()))
     except ValueError as e:
         st.toast(f"Tokenization error: {str(e)}", icon="❌")
-        return float("inf")  
+        return float("inf")  # Return a large number to prevent processing the message
 
 def generate_search_query(query, chat_history):
     current_time = datetime.datetime.now(datetime.timezone.utc).strftime("%a, %d %b %Y, %H:%M:%S UTC")
     prompt = f"""## Additional Context
 - The date and time is {current_time}.
 - Do not generate any other texts or messages other than the search queries, do not engage in a conversation. You are not a chatbot, an AI, an assistant or any other form. (IMPORTANT). NEVER EVER SAY ANYTHING ELSE, OTHER THAN THE SEARCH QUERY. YOU ARE NOT A CHATBOT OR AN ASSISTANT. YOU ARE A QUERY GENERATION SYSTEM.
+
+## You are a query generation system designed solely to provide relevant search queries based on the user's input. If the input does not require up-to-date information or refers to something that refers to something beyond your knowledge base, you may generate 1-3 focused search queries separated by newlines when needed. Your knowledge cutoff date is August 2023.
+
+## If the input is a casual conversation, a statement, an opinion, a thank you message, or any other input that does not require a factual search query response, you must respond with "c". Do not attempt to engage in conversation or provide any other responses.
+
+## However, if the input is a factual query requiring the most current information, data that may have changed since August 2023, or something unfamiliar to you, you may generate 1-3 concise and focused Google search queries separated by newlines to retrieve relevant up-to-date information when a single query is insufficient.
+
+## Generate multiple queries only if the question is complex and broad, requiring additional context or perspectives for a comprehensive answer. For simple factual queries, a single focused query should suffice.
+
+## When generating search queries, strictly adhere to these guidelines:
 
 - Keep it Simple:
 Google search is intelligent, so you don't need to be overly specific. For example, to find nearby pizza places, use: "Pizza places near me"
@@ -429,6 +543,8 @@ Google search is intelligent, so you don't need to be overly specific. Using too
 
 - Use Descriptive Words:
 Things can be described in multiple ways. If you struggle to find what you're searching for, rephrase the query using different descriptive words. For example, instead of "How to install drivers in Ubuntu?", try "Ubuntu driver installation troubleshooting".
+
+## You are strictly a query generation system. You do not engage in conversation or provide any other responses besides outputting focused search queries or "c". You have no additional capabilities.
 
 Input: can you help me study
 Output: c
@@ -454,6 +570,7 @@ Output: chicago plumbers\nplumbing services chicago
 Input: How do I install the latest graphics drivers for my NVIDIA GPU on Ubuntu 22.04?
 Output: install nvidia graphics drivers ubuntu 22.04\nubuntu 22.04 nvidia driver installation"""
 
+    # Send prompt to Omniplex
     url = "https://omniplex.ai/api/chat"
     headers = {'Content-Type': 'application/json'}
     payload = {
@@ -538,11 +655,11 @@ def scrape_and_process_results(queries, max_results_per_query):
     all_results_json = []
     num_queries = len(queries)
     if num_queries == 3:
-        max_results_per_query = 2  
+        max_results_per_query = 2  # Top 1 result for each query if there are 3 queries
     elif num_queries == 2:
-        max_results_per_query = 3  
+        max_results_per_query = 3  # Top 2 results for each query if there are 2 queries
     else:
-        max_results_per_query = 4  
+        max_results_per_query = 4  # Top 3 results for single query
 
     for query_idx, query in enumerate(queries):
         urls = omniplex_search(query)
@@ -553,9 +670,9 @@ def scrape_and_process_results(queries, max_results_per_query):
                 results_json.append({
                     "index": idx + query_idx * max_results_per_query,
                     "url": url,
-                    "content": scraped_data  
+                    "content": scraped_data  # Assuming omniplex_scrape returns text for each URL
                 })
-            all_results_json.extend(results_json)  
+            all_results_json.extend(results_json)  # Use extend to combine lists
     return json.dumps(all_results_json)
 
 initialize_session_state()
@@ -577,7 +694,7 @@ def generate_title(prompt):
     response = requests.post(url, headers=headers, json=payload)
     if response.status_code == 200:
         title = response.text.strip()
-        return title  
+        return title  # Return the title directly
     else:
         st.toast(f"Error generating title: {response.status_code}", icon="❌")
         return "Untitled"
@@ -604,7 +721,7 @@ def main_ui():
                 st.text_input("Password", type="password", key="password_signup")
                 st.form_submit_button("Sign up", on_click=signup)
     else:
-
+        # Automatically create a "New Chat" if there are no existing conversations
         if not st.session_state.conversations:
             create_new_conversation()
         current_conversation = st.session_state.current_conversation
@@ -617,9 +734,11 @@ def main_ui():
                 st.session_state.current_conversation = None
                 current_conversation = None
 
+        # Sidebar
         with st.sidebar:
             st.header(f"Welcome to Lumiere, {st.session_state.username}.")
 
+            # File upload
             st.file_uploader("Upload files (text or images, max 4)", type=[
                 "py", "txt", "json", "js", "css", "html", "xml", "csv", "tsv", "yaml", "yml",
                 "ini", "md", "log", "bat", "sh", "java", "c", "cpp", "h", "hpp", "cs", "go",
@@ -647,11 +766,12 @@ def main_ui():
             with st.expander("Settings"):
                 websearch = st.checkbox("Web Search", value=True)
 
+                # Add Site input field
                 site = st.text_input("Site", placeholder="stackoverflow.com", key="site_input")
 
                 available_models = list(MODEL_CONTEXT_LIMITS.keys())
                 selected_model = st.selectbox("Choose Model", available_models, index=available_models.index("gpt-4o"), disabled=st.session_state.is_processing)
-                st.session_state.selected_model = selected_model  
+                st.session_state.selected_model = selected_model  # Store the selected model in session state
 
                 temperature = st.slider("Temperature", 0.0, 1.0, 1.0, step=0.1, disabled=st.session_state.is_processing)
                 max_tokens = st.slider("Max Tokens", 100, 4096, 4096, step=100, disabled=st.session_state.is_processing)
@@ -676,6 +796,7 @@ def main_ui():
                 else:
                     st.session_state.is_processing = True
 
+                    # Generate title for the first user message in a new chat
                     if current_conversation == "New Chat":
                         title = generate_title(user_input)
                         st.session_state.conversations[title] = st.session_state.conversations.pop(current_conversation)
@@ -716,7 +837,7 @@ def main_ui():
                     typing_indicator = " |"
 
                     for chunk in chatbot.send_message(st.session_state.conversations[current_conversation], content_to_send, websearch=websearch):
-                        response_text = chunk.replace(typing_indicator, "")  
+                        response_text = chunk.replace(typing_indicator, "")  # Temporary display without indicator
                         response_placeholder.markdown(response_text + typing_indicator, unsafe_allow_html=True)
 
                     response_placeholder.markdown(response_text, unsafe_allow_html=True)
@@ -725,4 +846,5 @@ def main_ui():
                 st.session_state.all_conversations[st.session_state.username] = st.session_state.conversations
                 save_and_rerun()
 
+# Run the main UI
 main_ui()
