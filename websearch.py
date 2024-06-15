@@ -65,9 +65,6 @@ class Chatbot:
                 if site:
                     queries = [f"site:{site} {query}" for query in queries]
 
-                loop = asyncio.get_event_loop()
-                scraped_results_text = loop.run_until_complete(scrape_and_process_results(queries, 3))  # Scrape top 3 results for each query
-
                 current_time = datetime.datetime.now(datetime.timezone.utc).strftime("%a, %d %b %Y, %H:%M:%S UTC")
                 user_name = st.session_state.username
 
