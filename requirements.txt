@@ -7,3 +7,4 @@ python-docx
 requests-toolbelt
 PyPDF2
 opencv-python
+aiohttp
