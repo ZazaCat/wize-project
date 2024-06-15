@@ -15,9 +15,6 @@ import docx
 import tiktoken
 from bs4 import BeautifulSoup
 from requests.utils import default_headers
-import aiohttp
-import asyncio
-import re
 
 INITIAL_MESSAGE = {"role": "assistant", "content": "Hello! How can I help you today?"}
 
@@ -65,9 +62,7 @@ class Chatbot:
                 if site:
                     queries = [f"site:{site} {query}" for query in queries]
 
-                loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(loop)
-                scraped_results_json = loop.run_until_complete(scrape_and_process_results(queries, 3))
+                scraped_results_json = scrape_and_process_results(queries, 3)  # Scrape top 3 results for each query
 
                 current_time = datetime.datetime.now(datetime.timezone.utc).strftime("%a, %d %b %Y, %H:%M:%S UTC")
                 user_name = st.session_state.username
@@ -510,70 +505,84 @@ Output: install nvidia graphics drivers ubuntu 22.04\nubuntu 22.04 nvidia driver
         print(f"Error: {response.status_code} - {response.text}")
         return "CANCEL_WEBSEARCH"
 
-# Implementing the local asynchronous scraping and processing functions
-cache = {}
+def omniplex_search(query):
+    url = "https://omniplex.ai/api/search"
+    params = {
+        'q': query
+    }
+    headers = {
+        'User-Agent': "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36",
+        'authority': "omniplex.ai",
+        'accept-language': "en-PH,en-US;q=0.9,en;q=0.8",
+        'referer': "https://omniplex.ai/chat/Wk3rQUxprd",
+        'sec-ch-ua': "\"Not-A.Brand\";v=\"99\", \"Chromium\";v=\"124\"",
+        'sec-ch-ua-mobile': "?1",
+        'sec-ch-ua-platform': "\"Android\"",
+        'sec-fetch-dest': "empty",
+        'sec-fetch-mode': "cors",
+        'sec-fetch-site': "same-origin",
+        'Cookie': "_ga=GA1.1.1059292211.1715883464; _clck=fw8ekm%7C2%7Cflx%7C0%7C1597; _ga_4L0TGM4R80=GS1.1.1716182640.5.1.1716184046.0.0.0; _clsk=z2swc6%7C1716184049711%7C8%7C1%7Cu.clarity.ms%2Fcollect"
+    }
+    response = requests.get(url, params=params, headers=headers)
 
-async def scrape_text(url: str) -> str:
-    try:
-        async with aiohttp.ClientSession() as session:
-            async with session.get(url) as response:
-                if response.status != 200:
-                    raise Exception(f"HTTP error! status: {response.status}")
-                html = await response.text()
-                text = extract_body_text(html)
-                return text
-    except Exception as e:
-        print(f"Error fetching URL {url}:", e)
+    if response.status_code == 200:
+        data = response.json()
+        urls = [result['url'] for result in data['data']['webPages']['value']]
+        return urls
+    else:
+        print(f"Error: {response.status_code} - {response.text}")
+        return []
+
+def omniplex_scrape(urls):
+    url = "https://omniplex.ai/api/scrape"
+    params = {
+        'urls': ",".join(urls)
+    }
+    headers = {
+        'User-Agent': "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36",
+        'authority': "omniplex.ai",
+        'accept-language': "en-PH,en-US;q=0.9,en;q=0.8",
+        'content-type': "application/json",
+        'origin': "https://omniplex.ai",
+        'referer': "https://omniplex.ai/chat/Wk3rQUxprd",
+        'sec-ch-ua': "\"Not-A.Brand\";v=\"99\", \"Chromium\";v=\"124\"",
+        'sec-ch-ua-mobile': "?1",
+        'sec-ch-ua-platform': "\"Android\"",
+        'sec-fetch-dest': "empty",
+        'sec-fetch-mode': "cors",
+        'sec-fetch-site': "same-origin",
+        'Cookie': "_ga=GA1.1.1059292211.1715883464; _clck=fw8ekm%7C2%7Cflx%7C0%7C1597; _ga_4L0TGM4R80=GS1.1.1716182640.5.1.1716184046.0.0.0; _clsk=z2swc6%7C1716184064563%7C9%7C1%7Cu.clarity.ms%2Fcollect"
+    }
+    response = requests.post(url, params=params, headers=headers)
+
+    if response.status_code == 200:
+        return response.text
+    else:
+        print(f"Error: {response.status_code} - {response.text}")
         return ""
 
-def extract_body_text(html: str) -> str:
-    soup = BeautifulSoup(html, 'html.parser')
-    body = soup.find('body')
-    if body:
-        for script_or_style in body(['script', 'style']):
-            script_or_style.decompose()
-        text = re.sub(r'\s+', ' ', body.get_text()).strip()
-        return text
-    return ""
-
-async def scrape_urls(urls):
-    scraping_tasks = []
-    for url in urls:
-        if url in cache:
-            scraping_tasks.append(asyncio.create_task(asyncio.sleep(0, result=cache[url])))
-        else:
-            scraping_tasks.append(scrape_text(url))
-
-    results = await asyncio.gather(*scraping_tasks)
-
-    for url, result in zip(urls, results):
-        cache[url] = result
-
-    return results
-
-# Update scrape_and_process_results function to use local scraping
-async def scrape_and_process_results(queries, max_results_per_query):
+def scrape_and_process_results(queries, max_results_per_query):
     all_results_json = []
     num_queries = len(queries)
     if num_queries == 3:
-        max_results_per_query = 2
+        max_results_per_query = 2  # Top 1 result for each query if there are 3 queries
     elif num_queries == 2:
-        max_results_per_query = 3
+        max_results_per_query = 3  # Top 2 results for each query if there are 2 queries
     else:
-        max_results_per_query = 4
+        max_results_per_query = 4  # Top 3 results for single query
 
     for query_idx, query in enumerate(queries):
         urls = omniplex_search(query)
         if urls:
-            scraped_data = await scrape_urls(urls[:max_results_per_query])
+            scraped_data = omniplex_scrape(urls[:max_results_per_query])
             results_json = []
-            for idx, (url, content) in enumerate(zip(urls[:max_results_per_query], scraped_data), start=1):
+            for idx, url in enumerate(urls[:max_results_per_query], start=1):
                 results_json.append({
                     "index": idx + query_idx * max_results_per_query,
                     "url": url,
-                    "content": content
+                    "content": scraped_data  # Assuming omniplex_scrape returns text for each URL
                 })
-            all_results_json.extend(results_json)
+            all_results_json.extend(results_json)  # Use extend to combine lists
     return json.dumps(all_results_json)
 
 initialize_session_state()
@@ -730,7 +739,7 @@ def main_ui():
                         queries = [f"site:{site} {query}" for query in queries]
                     for query in queries:
                         clean_query = query.replace(f"site:{site} ", "").strip()
-                        st.write(f"Searching for {clean_query}")
+                        st.write(f"Searching 🌐 for {clean_query}")
 
                 with st.chat_message("assistant", avatar="https://i.ibb.co/4PbTLG9/20240531-141431.jpg"):
                     response_placeholder = st.empty()
