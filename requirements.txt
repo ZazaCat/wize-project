@@ -8,4 +8,4 @@ requests-toolbelt
 PyPDF2
 opencv-python
 aiohttp
-ffmpeg
+ffmpeg-python
