@@ -5,7 +5,6 @@ import ffmpeg
 import os
 from PIL import Image
 import streamlit as st
-from streamlit.script_request_queue import RerunData, RerunException
 
 INITIAL_MESSAGE = {"role": "assistant", "content": "Hello! How can I help you today?"}
 MODEL_CONTEXT_LIMITS = {"gpt-4o": 128000, "gpt-4-turbo-2024-04-09": 128000, "gpt-4-turbo": 128000, "gpt-4": 8192, "gpt-3.5-turbo": 16384}
