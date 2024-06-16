@@ -1,0 +1,9 @@
+extra_streamlit_components
+requests_toolbelt
+beautifulsoup4
+tiktoken
+pdfreader
+python-docx
+requests-toolbelt
+PyPDF2
+aiohttp
