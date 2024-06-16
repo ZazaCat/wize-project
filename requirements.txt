@@ -10,3 +10,4 @@ opencv-python
 aiohttp
 ffmpeg-python
 ffprobe
+ffmpeg
