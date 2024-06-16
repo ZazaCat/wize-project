@@ -454,55 +454,65 @@ def handle_file_upload():
                     save_and_rerun()
 
             elif any(filename.endswith(ext) for ext in valid_video_extensions):
+
                 # Handle video uploads
                 if selected_model not in {"gpt-4o", "gpt-4", "gpt-4-turbo", "gpt-4-turbo-2024-04-09"}:
                     st.toast("Video uploads are only supported by models that accept video input.", icon="⚠️")
                     st.session_state.is_processing = False
                     return
 
-                video_path = uploaded_file.name
-                with open(video_path, 'wb') as f:
-                    f.write(file_contents)
-
                 try:
+                    # Save the uploaded video temporarily
+                    with open(uploaded_file.name, 'wb') as f:
+                        f.write(file_contents)
+
                     # Extract frames from the video
-                    frames = extract_frames(video_path, num_frames=15)
+                    frames = extract_frames(uploaded_file.name, num_frames=15)
+
+                    # Create a grid image from video frames
                     grid_image_path = create_image_grid(frames)
 
                     # Encode the grid image
                     encoded_grid_image = encode_image(grid_image_path)
 
-                    # Request a response based on the grid image
-                    user_prompt = "What’s in this video clip?"
-                    response = send_request_to_openai(encoded_grid_image, user_prompt)
+                    # Create the markdown format needed for display
+                    grid_image_base64 = f"data:image/jpeg;base64,{encoded_grid_image}"
 
-                    if response:
-                        st.session_state.conversations[st.session_state.current_conversation].append({
-                            "role": "user",
-                            "content": [
-                                {"type": "text", "text": user_prompt},
-                                {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{encoded_grid_image}", "detail": "high"}}
-                            ]
-                        })
-                        st.session_state.conversations[st.session_state.current_conversation].append({
-                            "role": "assistant",
-                            "content": response.strip(),
-                        })
-                        st.session_state.all_conversations[st.session_state.username] = st.session_state.conversations
+                    # Add the frame grid image to chat history
+                    st.session_state.conversations[st.session_state.current_conversation].append({
+                        "role": "user",
+                        "content": [
+                            {"type": "text", "text": "What’s in this video clip?"},
+                            {"type": "image_url", "image_url": {
+                                "url": grid_image_base64,
+                                "detail": "high"
+                            }}
+                        ],
+                        "video_frames": grid_image_base64
+                    })
 
-                        st.session_state.is_processing = False
-                        save_and_rerun()
+                    # Display the original uploaded video
+                    st.session_state.conversations[st.session_state.current_conversation].append({
+                        "role": "user",
+                        "content": "Here is the uploaded video:",
+                        "video_url": uploaded_file.name
+                    })
 
-                    # Clean up the frames and grid image files
-                    for frame_path in frames:
-                        os.remove(frame_path)
-                    os.remove(grid_image_path)
-                    os.remove(video_path)
+                    st.session_state.all_conversations[st.session_state.username] = st.session_state.conversations
+                    save_and_rerun()
 
                 except Exception as e:
                     st.toast(f"Error processing video {uploaded_file.name}: {str(e)}", icon="❌")
                     st.session_state.is_processing = False
                     return
+
+                finally:
+                    # Clean up the frames and grid image files
+                    for frame_path in frames:
+                        os.remove(frame_path)
+                    os.remove(uploaded_file.name)
+                    os.remove(grid_image_path)
+
             else:
                 st.toast("Only text, image, and video files like .py, .txt, .json, .jpg, .jpeg, .png, .pdf, .docx, .mp4, .avi, .mov etc. are allowed.", icon="❌")
 
@@ -799,7 +809,7 @@ def main_ui():
                 encoding = tiktoken.encoding_for_model(selected_model)
 
             st.button("Logout", on_click=logout)
-        if current_conversation:
+            if current_conversation:
             st.title(f"{current_conversation or 'No Chat Selected'}")
             display_chat(current_conversation)
 
