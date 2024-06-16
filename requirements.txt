@@ -9,3 +9,4 @@ PyPDF2
 opencv-python
 aiohttp
 ffmpeg-python
+ffprobe
