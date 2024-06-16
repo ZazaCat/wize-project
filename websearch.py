@@ -809,7 +809,7 @@ def main_ui():
                 encoding = tiktoken.encoding_for_model(selected_model)
 
             st.button("Logout", on_click=logout)
-            if current_conversation:
+        if current_conversation:
             st.title(f"{current_conversation or 'No Chat Selected'}")
             display_chat(current_conversation)
 
