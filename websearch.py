@@ -3,7 +3,6 @@ import requests
 import json
 import os
 import datetime
-import base64
 import streamlit as st
 from PIL import Image
 import io
@@ -429,8 +428,6 @@ def handle_file_upload():
                 # Compress image if necessary
                 file_contents = compress_image(io.BytesIO(file_contents))
 
-                send_image_multipart(uploaded_file.name, file_contents)
-
                 encoded_image = base64.b64encode(file_contents).decode("utf-8")
                 mime_type = Image.open(io.BytesIO(file_contents)).format.lower()
                 image_base64 = f"data:image/{mime_type};base64,{encoded_image}"
@@ -454,55 +451,36 @@ def handle_file_upload():
                     save_and_rerun()
 
             elif any(filename.endswith(ext) for ext in valid_video_extensions):
-                # Handle video uploads
-                if selected_model not in {"gpt-4o", "gpt-4", "gpt-4-turbo", "gpt-4-turbo-2024-04-09"}:
-                    st.toast("Video uploads are only supported by models that accept video input.", icon="⚠️")
+                # Only allow video uploads for models that support video input
+                allowed_models = {"gpt-4o", "gpt-4", "gpt-4-turbo", "gpt-4-turbo-2024-04-09"}
+                if selected_model not in allowed_models:
+                    st.toast("Video uploads are only supported by models that accept video inputs.", icon="⚠️")
                     st.session_state.is_processing = False
                     return
 
-                video_path = uploaded_file.name
-                with open(video_path, 'wb') as f:
+                # Save the video file temporarily
+                video_temp_path = os.path.join("temp_videos", uploaded_file.name)
+                os.makedirs(os.path.dirname(video_temp_path), exist_ok=True)
+                with open(video_temp_path, "wb") as f:
                     f.write(file_contents)
 
-                try:
-                    # Extract frames from the video
-                    frames = extract_frames(video_path, num_frames=15)
-                    grid_image_path = create_image_grid(frames)
+                # Encode the video to base64
+                video_base64 = base64.b64encode(file_contents).decode("utf-8")
+                video_url = f"data:video/{uploaded_file.name.split('.')[-1]};base64,{video_base64}"
 
-                    # Encode the grid image
-                    encoded_grid_image = encode_image(grid_image_path)
+                st.session_state.conversations[st.session_state.current_conversation].append({
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": "What’s in this video?"},
+                        {"type": "video_url", "video_url": {"url": video_url, "detail": "high"}}
+                    ],
+                    "video_url": video_url
+                })
 
-                    # Request a response based on the grid image
-                    user_prompt = "What’s in this video clip?"
-                    response = send_request_to_openai(encoded_grid_image, user_prompt)
+                st.session_state.all_conversations[st.session_state.username] = st.session_state.conversations
+                st.session_state.is_processing = False
+                save_and_rerun()
 
-                    if response:
-                        st.session_state.conversations[st.session_state.current_conversation].append({
-                            "role": "user",
-                            "content": [
-                                {"type": "text", "text": user_prompt},
-                                {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{encoded_grid_image}", "detail": "high"}}
-                            ]
-                        })
-                        st.session_state.conversations[st.session_state.current_conversation].append({
-                            "role": "assistant",
-                            "content": response.strip(),
-                        })
-                        st.session_state.all_conversations[st.session_state.username] = st.session_state.conversations
-
-                        st.session_state.is_processing = False
-                        save_and_rerun()
-
-                    # Clean up the frames and grid image files
-                    for frame_path in frames:
-                        os.remove(frame_path)
-                    os.remove(grid_image_path)
-                    os.remove(video_path)
-
-                except Exception as e:
-                    st.toast(f"Error processing video {uploaded_file.name}: {str(e)}", icon="❌")
-                    st.session_state.is_processing = False
-                    return
             else:
                 st.toast("Only text, image, and video files like .py, .txt, .json, .jpg, .jpeg, .png, .pdf, .docx, .mp4, .avi, .mov etc. are allowed.", icon="❌")
 
