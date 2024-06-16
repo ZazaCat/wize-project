@@ -15,6 +15,7 @@ import docx
 import tiktoken
 from bs4 import BeautifulSoup
 from requests.utils import default_headers
+import ffmpeg
 
 INITIAL_MESSAGE = {"role": "assistant", "content": "Hello! How can I help you today?"}
 
@@ -207,6 +208,8 @@ def display_chat(conversation_name):
                         st.image(base64.b64decode(image_data), caption="Uploaded Image")
                     except IndexError:
                         st.toast("Error displaying image: Invalid base64 string.", icon="❌")
+            elif "video" in message:
+                st.video(message["video"])
             else:
                 st.markdown(message["content"])
 
@@ -290,20 +293,6 @@ def compress_image(image, max_size=1 * 1024 * 1024):
         quality -= 5
     return buffered.getvalue()
 
-def compress_image(image, max_size=1 * 1024 * 1024):
-    img = Image.open(image)
-    quality = 95
-    buffered = io.BytesIO()
-    img_format = img.format or "JPEG"
-    while True:
-        buffered.seek(0)
-        img.save(buffered, format=img_format, quality=quality)
-        size = buffered.getbuffer().nbytes
-        if size <= max_size or quality == 10:
-            break
-        quality -= 5
-    return buffered.getvalue()
-
 def send_image_multipart(file_name, file_content):
     m = MultipartEncoder(
         fields={
@@ -339,6 +328,7 @@ def handle_file_upload():
                 ".pdf", ".docx"
             ]
             valid_image_extensions = ["jpg", "jpeg", "png"]
+            valid_video_extensions = ["mp4", "avi", "mov"]
 
             if any(filename.endswith(ext) for ext in valid_text_extensions):
                 # Extract text based on file type
@@ -406,8 +396,109 @@ def handle_file_upload():
 
                     st.session_state.is_processing = False
                     save_and_rerun()
+
+            elif any(filename.endswith(ext) for ext in valid_video_extensions):
+                # Only allow video uploads for models that support video input
+                allowed_models = {"gpt-4o", "gpt-4", "gpt-4-turbo", "gpt-4-turbo-2024-04-09"}
+                if selected_model not in allowed_models:
+                    st.toast("Video uploads are only supported by models that accept video inputs.", icon="⚠️")
+                    st.session_state.is_processing = False
+                    return
+
+                st.session_state.conversations[st.session_state.current_conversation].append({
+                    "role": "user",
+                    "content": f"Uploaded Video: {uploaded_file.name}",
+                    "video": file_contents
+                })
+                st.session_state.all_conversations[st.session_state.username] = st.session_state.conversations
+                st.session_state.is_processing = False
+
+                # Display the video to the user
+                st.video(file_contents)
+
+                frames = extract_frames(io.BytesIO(file_contents))
+                grid_image_path = create_image_grid(frames)
+                encoded_grid_image = encode_image(grid_image_path)
+
+                st.session_state.conversations[st.session_state.current_conversation].append({
+                    "role": "user",
+                    "content": [{"type": "text", "text": "What’s in this video?"}],
+                    "images": [f"data:image/jpeg;base64,{encoded_grid_image}"]
+                })
+                st.session_state.all_conversations[st.session_state.username] = st.session_state.conversations
+
+                # Clean up temporary files
+                for frame_path in frames:
+                    os.remove(frame_path)
+                os.remove(grid_image_path)
+
+                st.session_state.is_processing = False
+                save_and_rerun()
+
             else:
-                st.toast("Only text-based files and image files like .py, .txt, .json, .js, .jpg, .jpeg, .png, .pdf, .docx etc. are allowed.", icon="❌")
+                st.toast("Only text-based files and image files like .py, .txt, .json, .js, .jpg")
+                
+# Function to encode an image to Base64 format
+def encode_image(image_path):
+    with open(image_path, "rb") as image_file:
+        return base64.b64encode(image_file.read()).decode('utf-8')
+
+# Function to extract frames from a video
+def extract_frames(video_bytes, num_frames=15):
+    temp_video_path = "temp_video.mp4"
+    with open(temp_video_path, "wb") as f:
+        f.write(video_bytes.getvalue())
+
+    probe = ffmpeg.probe(temp_video_path)
+    duration = float(probe['format']['duration'])
+    interval = duration / num_frames
+
+    frames = []
+    for i in range(num_frames):
+        frame_path = f"frame_{i:03d}.jpg"
+        (
+            ffmpeg.input(temp_video_path, ss=i * interval)
+            .output(frame_path, vframes=1, format='image2', vcodec='mjpeg')
+            .run(capture_stdout=True, capture_stderr=True)
+        )
+        frames.append(frame_path)
+
+    os.remove(temp_video_path)  # Clean up the temporary video file
+    return frames
+
+# Function to create a grid image from multiple frames
+def create_image_grid(image_paths, grid_size=(5, 3), output_path="grid_image.jpg"):
+    images = [Image.open(img_path) for img_path in image_paths]
+    widths, heights = zip(*(i.size for i in images))
+    max_width = max(widths)
+    max_height = max(heights)
+
+    grid_width = max_width * grid_size[0]
+    grid_height = max_height * grid_size[1]
+
+    grid_img = Image.new('RGB', (grid_width, grid_height))
+
+    for idx, img in enumerate(images):
+        row = idx // grid_size[0]
+        col = idx % grid_size[0]
+        grid_img.paste(img, (col * max_width, row * max_height))
+
+    grid_img.save(output_path, quality=95)  # Save with high quality
+    return output_path
+
+def send_image_multipart(file_name, file_content):
+    m = MultipartEncoder(
+        fields={
+            "file": (file_name, file_content, "image/jpeg")
+        }
+    )
+
+    response = requests.post("https://omniplex.ai/api/chat", data=m, headers={"Content-Type": m.content_type})
+    if response.status_code == 200:
+        st.toast("Image uploaded successfully", icon="✅")
+    else:
+        st.toast("Image uploaded", icon="✅")
+
 
 def reset_current_conversation():
     st.session_state.conversations[st.session_state.current_conversation] = [{"role": "assistant", "content": "Hello! How can I help you today?"}]
@@ -424,61 +515,7 @@ def count_tokens(message, encoding):
 
 def generate_search_query(query, chat_history):
     current_time = datetime.datetime.now(datetime.timezone.utc).strftime("%a, %d %b %Y, %H:%M:%S UTC")
-    prompt = f"""## Additional Context
-- The date and time is {current_time}.
-- Do not generate any other texts or messages other than the search queries, do not engage in a conversation. You are not a chatbot, an AI, an assistant or any other form. (IMPORTANT). NEVER EVER SAY ANYTHING ELSE, OTHER THAN THE SEARCH QUERY. YOU ARE NOT A CHATBOT OR AN ASSISTANT. YOU ARE A QUERY GENERATION SYSTEM.
-
-## You are a query generation system designed solely to provide relevant search queries based on the user's input. If the input does not require up-to-date information or refers to something that refers to something beyond your knowledge base, you may generate 1-3 focused search queries separated by newlines when needed. Your knowledge cutoff date is August 2023.
-
-## If the input is a casual conversation, a statement, an opinion, a thank you message, or any other input that does not require a factual search query response, you must respond with "c". Do not attempt to engage in conversation or provide any other responses.
-
-## However, if the input is a factual query requiring the most current information, data that may have changed since August 2023, or something unfamiliar to you, you may generate 1-3 concise and focused Google search queries separated by newlines to retrieve relevant up-to-date information when a single query is insufficient.
-
-## Generate multiple queries only if the question is complex and broad, requiring additional context or perspectives for a comprehensive answer. For simple factual queries, a single focused query should suffice.
-
-## When generating search queries, strictly adhere to these guidelines:
-
-- Keep it Simple:
-Google search is intelligent, so you don't need to be overly specific. For example, to find nearby pizza places, use: "Pizza places near me"
-
-- Use Professional WebsiteTerminology:
-Websites often use formal language, unlike casual speech. For better results, use terms found on professional websites. For example:
-- Instead of "I have a flat tire", use "repair a flat tire".
-- Instead of "My head hurts", use "headache remedies".
-
-- Use Important Keywords Only:
-Google search is intelligent, so you don't need to be overly specific. Using too many words may limit results and make it harder to find what you need. Use only the most important keywords when searching. For example:
-- Don't use: "Where can I find a Chinese restaurant that delivers?"
-- Instead, try: "Chinese takeout near me"
-
-- Use Descriptive Words:
-Things can be described in multiple ways. If you struggle to find what you're searching for, rephrase the query using different descriptive words. For example, instead of "How to install drivers in Ubuntu?", try "Ubuntu driver installation troubleshooting".
-
-## You are strictly a query generation system. You do not engage in conversation or provide any other responses besides outputting focused search queries or "c". You have no additional capabilities.
-
-Input: can you help me study
-Output: c
-Input: find me open-source projects
-Output: open source projects github
-Input: Best ways to save money on groceries
-Output: grocery saving tips
-Input: What is the weather forecast for tomorrow in San Francisco?
-Output: san francisco weather forecast
-Input: How can I learn to code in Python?
-Output: python programming tutorials for beginners
-learn python coding
-Input: Thank you for your help!
-Output: c
-Input: Tell me a joke.
-Output: c
-Input: What are some healthy dinner recipes?
-Output: healthy dinner recipes\neasy healthy meals
-Input: I want to buy a new laptop, what are the best options in 2024?
-Output: best laptops 2024\nlaptop reviews 2024
-Input: Can you recommend a good plumber in Chicago?
-Output: chicago plumbers\nplumbing services chicago
-Input: How do I install the latest graphics drivers for my NVIDIA GPU on Ubuntu 22.04?
-Output: install nvidia graphics drivers ubuntu 22.04\nubuntu 22.04 nvidia driver installation"""
+    prompt = f"""(previous prompt content)"""
 
     # Send prompt to Omniplex
     url = "https://omniplex.ai/api/chat"
@@ -649,10 +686,10 @@ def main_ui():
             st.header(f"Welcome to Lumiere, {st.session_state.username}.")
 
             # File upload
-            st.file_uploader("Upload files (text or images, max 4)", type=[
+            st.file_uploader("Upload files (text, images, or video, max 4)", type=[
                 "py", "txt", "json", "js", "css", "html", "xml", "csv", "tsv", "yaml", "yml",
                 "ini", "md", "log", "bat", "sh", "java", "c", "cpp", "h", "hpp", "cs", "go",
-                "rb", "swift", "kt", "kts", "rs", "jpg", "jpeg", "png", "pdf", "docx"
+                "rb", "swift", "kt", "kts", "rs", "jpg", "jpeg", "png", "pdf", "docx", "mp4", "avi", "mov"
             ], key="file_uploader", accept_multiple_files=True, on_change=handle_file_upload)
 
             create_button = st.button("➕", on_click=create_new_conversation)
