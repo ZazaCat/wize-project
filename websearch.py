@@ -1,8 +1,9 @@
-import base64
 import requests
 import json
 import os
 import datetime
+import base64
+import ffmpeg
 import streamlit as st
 from PIL import Image
 import io
@@ -15,7 +16,6 @@ import docx
 import tiktoken
 from bs4 import BeautifulSoup
 from requests.utils import default_headers
-import ffmpeg
 
 INITIAL_MESSAGE = {"role": "assistant", "content": "Hello! How can I help you today?"}
 
@@ -75,7 +75,7 @@ Write an accurate answer concisely for a given question in English, always alway
 Use markdown to format paragraphs, lists, tables, and quotes whenever possible. 
 Use markdown code blocks to write code, including the language for syntax highlighting.
 Use LaTeX to wrap ALL math expressions. Always use double dollar signs $$, for example $$E=mc^2$$.
-DO NOT include any URL's, only include hyperlinked citations with superscript numbers, e.g. [¹](https://example.com/source1)[²](https://example.com/source2)).
+DO NOT include any URL's, only include hyperlinked citations with superscript numbers, e.g. [¹](https://example.com/source1)
 DO NOT include references (URL's at the end, sources).
 Use hyperlinked footnote citations at the end of applicable sentences (e.g, [¹](https://example.com/source1)[²](https://example.com/source2)).
 Write more than 100 words (2 paragraphs).
@@ -208,8 +208,6 @@ def display_chat(conversation_name):
                         st.image(base64.b64decode(image_data), caption="Uploaded Image")
                     except IndexError:
                         st.toast("Error displaying image: Invalid base64 string.", icon="❌")
-            elif "video" in message:
-                st.video(message["video"])
             else:
                 st.markdown(message["content"])
 
@@ -293,6 +291,20 @@ def compress_image(image, max_size=1 * 1024 * 1024):
         quality -= 5
     return buffered.getvalue()
 
+def compress_image(image, max_size=1 * 1024 * 1024):
+    img = Image.open(image)
+    quality = 95
+    buffered = io.BytesIO()
+    img_format = img.format or "JPEG"
+    while True:
+        buffered.seek(0)
+        img.save(buffered, format=img_format, quality=quality)
+        size = buffered.getbuffer().nbytes
+        if size <= max_size or quality == 10:
+            break
+        quality -= 5
+    return buffered.getvalue()
+
 def send_image_multipart(file_name, file_content):
     m = MultipartEncoder(
         fields={
@@ -305,6 +317,41 @@ def send_image_multipart(file_name, file_content):
         st.toast("Image uploaded successfully", icon="✅")
     else:
         st.toast("Image uploaded", icon="✅")
+
+def extract_frames(video_path, num_frames=15):
+    probe = ffmpeg.probe(video_path)
+    duration = float(probe['format']['duration'])
+    interval = duration / num_frames
+
+    frames = []
+    for i in range(num_frames):
+        frame_path = f"frame_{i:03d}.jpg"
+        (
+            ffmpeg.input(video_path, ss=i * interval)
+            .output(frame_path, vframes=1, format='image2', vcodec='mjpeg')
+            .run(capture_stdout=True, capture_stderr=True)
+        )
+        frames.append(frame_path)
+    return frames
+
+def create_image_grid(image_paths, grid_size=(5, 3), output_path="grid_image.jpg"):
+    images = [Image.open(img_path) for img_path in image_paths]
+    widths, heights = zip(*(i.size for i in images))
+    max_width = max(widths)
+    max_height = max(heights)
+
+    grid_width = max_width * grid_size[0]
+    grid_height = max_height * grid_size[1]
+
+    grid_img = Image.new('RGB', (grid_width, grid_height))
+
+    for idx, img in enumerate(images):
+        row = idx // grid_size[0]
+        col = idx % grid_size[0]
+        grid_img.paste(img, (col * max_width, row * max_height))
+
+    grid_img.save(output_path, quality=95)  # Save with high quality
+    return output_path
 
 def handle_file_upload():
     selected_model = st.session_state.selected_model
@@ -328,7 +375,7 @@ def handle_file_upload():
                 ".pdf", ".docx"
             ]
             valid_image_extensions = ["jpg", "jpeg", "png"]
-            valid_video_extensions = ["mp4", "mov", "avi", "mkv"]
+            valid_video_extensions = ["mp4", "avi", "mov"]
 
             if any(filename.endswith(ext) for ext in valid_text_extensions):
                 # Extract text based on file type
@@ -397,41 +444,55 @@ def handle_file_upload():
                     st.session_state.is_processing = False
                     save_and_rerun()
             elif any(filename.endswith(ext) for ext in valid_video_extensions):
-                video_path = uploaded_file.name
+                # Only allow video uploads for models that support video input
+                allowed_models = {"gpt-4o", "gpt-4", "gpt-4-turbo", "gpt-4-turbo-2024-04-09"}
+                if selected_model not in allowed_models:
+                    st.toast("Video uploads are only supported by models that accept video inputs.", icon="⚠️")
+                    st.session_state.is_processing = False
+                    return
 
-                # Save video temporarily
-                temp_video_path = f"temp_{video_path}"
-                with open(temp_video_path, "wb") as f:
+                # Display the uploaded video
+                st.video(uploaded_file)
+
+                # Extract frames and create image grid
+                with open('temp_video.mp4', 'wb') as f:
                     f.write(file_contents)
+                frames = extract_frames('temp_video.mp4', num_frames=15)
+                grid_image_path = create_image_grid(frames, output_path='grid_image.jpg')
 
-                # Extract frames from the video
-                frames = extract_frames(temp_video_path, num_frames=15)
-                grid_image_path = create_image_grid(frames)
-
-                # Encode the grid image to base64
+                # Encode the grid image
                 with open(grid_image_path, "rb") as img_file:
-                    grid_image_base64 = base64.b64encode(img_file.read()).decode('utf-8')
-                grid_image_url = f"data:image/jpeg;base64,{grid_image_base64}"
+                    encoded_grid_image = base64.b64encode(img_file.read()).decode("utf-8")
+                image_base64 = f"data:image/jpeg;base64,{encoded_grid_image}"
 
-                # Append video and grid image to the conversation
+                if "image_bundles" not in st.session_state:
+                    st.session_state.image_bundles = []
+                st.session_state.image_bundles.append(image_base64)
+
+                # Update conversation state
                 st.session_state.conversations[st.session_state.current_conversation].append({
                     "role": "user",
-                    "video": temp_video_path,
-                    "content": [{"type": "text", "text": "What’s in this video?"}, {"type": "image_url", "image_url": {"url": grid_image_url}}]
+                    "content": [{"type": "text", "text": "What's in this video?"}] + [
+                        {"type": "image_url", "image_url": {"url": img}} for img in st.session_state.image_bundles
+                    ],
+                    "images": st.session_state.image_bundles
                 })
+                st.session_state.image_bundles = []
                 st.session_state.all_conversations[st.session_state.username] = st.session_state.conversations
 
                 # Clean up temporary files
-                os.remove(temp_video_path)
+                os.remove('temp_video.mp4')
+                for frame_path in frames:
+                    os.remove(frame_path)
                 os.remove(grid_image_path)
 
                 st.session_state.is_processing = False
                 save_and_rerun()
             else:
-                st.toast("Only text-based files, image files, and video files like .py, .txt, .json, .js, .jpg, .jpeg, .png, .mp4, .mov, etc. are allowed.", icon="❌")
+                st.toast("Only text-based files, image files, and video files like .py, .txt, .json, .js, .jpg, .jpeg, .png, .pdf, .docx, .mp4, .mov, .avi are allowed.", icon="❌")
 
 def reset_current_conversation():
-    st.session_state.conversations[st.session_state.current_conversation] = [INITIAL_MESSAGE]
+    st.session_state.conversations[st.session_state.current_conversation] = [{"role": "assistant", "content": "Hello! How can I help you today?"}]
     st.session_state.all_conversations[st.session_state.username] = st.session_state.conversations
     save_and_rerun()
 
@@ -462,7 +523,7 @@ def generate_search_query(query, chat_history):
 - Keep it Simple:
 Google search is intelligent, so you don't need to be overly specific. For example, to find nearby pizza places, use: "Pizza places near me"
 
-- Use Professional Website Terminology:
+- Use Professional WebsiteTerminology:
 Websites often use formal language, unlike casual speech. For better results, use terms found on professional websites. For example:
 - Instead of "I have a flat tire", use "repair a flat tire".
 - Instead of "My head hurts", use "headache remedies".
@@ -586,11 +647,11 @@ def scrape_and_process_results(queries, max_results_per_query):
     all_results_json = []
     num_queries = len(queries)
     if num_queries == 3:
-        max_results_per_query = 2  # Top 1 result for each query if there are 3 queries
+        max_results_per_query = 2  # Top 2 result for each query if there are 3 queries
     elif num_queries == 2:
-        max_results_per_query = 3  # Top 2 results for each query if there are 2 queries
+        max_results_per_query = 3  # Top 3 results for each query if there are 2 queries
     else:
-        max_results_per_query = 4  # Top 3 results for single query
+        max_results_per_query = 4  # Top 4 results for single query
 
     for query_idx, query in enumerate(queries):
         urls = omniplex_search(query)
@@ -636,41 +697,6 @@ def create_new_conversation():
     st.session_state.current_conversation = new_chat_name
     save_and_rerun()
 
-def extract_frames(video_path, num_frames=15):
-    probe = ffmpeg.probe(video_path)
-    duration = float(probe['format']['duration'])
-    interval = duration / num_frames
-
-    frames = []
-    for i in range(num_frames):
-        frame_path = f"frame_{i:03d}.jpg"
-        (
-            ffmpeg.input(video_path, ss=i * interval)
-            .output(frame_path, vframes=1, format='image2', vcodec='mjpeg')
-            .run(capture_stdout=True, capture_stderr=True)
-        )
-        frames.append(frame_path)
-    return frames
-
-def create_image_grid(image_paths, grid_size=(5, 3), output_path="grid_image.jpg"):
-    images = [Image.open(img_path) for img_path in image_paths]
-    widths, heights = zip(*(i.size for i in images))
-    max_width = max(widths)
-    max_height = max(heights)
-
-    grid_width = max_width * grid_size[0]
-    grid_height = max_height * grid_size[1]
-
-    grid_img = Image.new('RGB', (grid_width, grid_height))
-
-    for idx, img in enumerate(images):
-        row = idx // grid_size[0]
-        col = idx % grid_size[0]
-        grid_img.paste(img, (col * max_width, row * max_height))
-
-    grid_img.save(output_path, quality=95)  # Save with high quality
-    return output_path
-
 def main_ui():
     if st.session_state.username is None:
         tab1, tab2 = st.tabs(["Login", "Signup"])
@@ -705,11 +731,10 @@ def main_ui():
             st.header(f"Welcome to Lumiere, {st.session_state.username}.")
 
             # File upload
-            st.file_uploader("Upload files (text, images, or videos)", type=[
+            st.file_uploader("Upload files (text, images, or videos, max 4)", type=[
                 "py", "txt", "json", "js", "css", "html", "xml", "csv", "tsv", "yaml", "yml",
                 "ini", "md", "log", "bat", "sh", "java", "c", "cpp", "h", "hpp", "cs", "go",
-                "rb", "swift", "kt", "kts", "rs", "jpg", "jpeg", "png", "pdf", "docx",
-                "mp4", "mov", "avi", "mkv"
+                "rb", "swift", "kt", "kts", "rs", "jpg", "jpeg", "png", "pdf", "docx", "mp4", "mov", "avi"
             ], key="file_uploader", accept_multiple_files=True, on_change=handle_file_upload)
 
             create_button = st.button("➕", on_click=create_new_conversation)
@@ -746,6 +771,9 @@ def main_ui():
 
                 system_prompt = st.text_area("System Prompt", "You are a helpful AI assistant.", disabled=st.session_state.is_processing)
 
+                encoding = tiktoken.encoding_for_model(selected_model)
+
+            st.button("Logout", on_click=logout)
         if current_conversation:
             st.title(f"{current_conversation or 'No Chat Selected'}")
             display_chat(current_conversation)
@@ -753,8 +781,8 @@ def main_ui():
             user_input = st.chat_input("Send a message", disabled=st.session_state.is_processing)
 
             if user_input and not st.session_state.is_processing:
-                model_context_window = MODEL_CONTEXT_LIMITS.get(st.session_state.selected_model, 4096)
-                user_input_tokens = count_tokens(user_input, tiktoken.encoding_for_model(st.session_state.selected_model))
+                model_context_window = MODEL_CONTEXT_LIMITS.get(selected_model, 4096)
+                user_input_tokens = count_tokens(user_input, encoding)
                 if user_input_tokens > model_context_window:
                     st.toast("Your message is too long.", icon="❌")
                 else:
