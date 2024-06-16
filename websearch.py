@@ -302,22 +302,24 @@ def encode_image(image_path):
     with open(image_path, "rb") as image_file:
         return base64.b64encode(image_file.read()).decode('utf-8')
 
-def extract_frames_in_memory(video_path, num_frames=15):
+def extract_frames(video_path, num_frames=15):
     probe = ffmpeg.probe(video_path)
     duration = float(probe['format']['duration'])
     interval = duration / num_frames
 
     frames = []
     for i in range(num_frames):
-        frame_bytes = (
+        frame_path = f"frame_{i:03d}.jpg"
+        (
             ffmpeg.input(video_path, ss=i * interval)
-            .output("pipe:", vframes=1, format='image2', vcodec='mjpeg')
+            .output(frame_path, vframes=1, format='image2', vcodec='mjpeg')
             .run(capture_stdout=True, capture_stderr=True)
-        )[0]
-        frames.append(Image.open(io.BytesIO(frame_bytes)))
+        )
+        frames.append(frame_path)
     return frames
 
-def create_image_grid_in_memory(images, grid_size=(5, 3)):
+def create_image_grid(image_paths, grid_size=(5, 3), output_path="grid_image.jpg"):
+    images = [Image.open(img_path) for img_path in image_paths]
     widths, heights = zip(*(i.size for i in images))
     max_width = max(widths)
     max_height = max(heights)
@@ -332,13 +334,12 @@ def create_image_grid_in_memory(images, grid_size=(5, 3)):
         col = idx % grid_size[0]
         grid_img.paste(img, (col * max_width, row * max_height))
 
-    buffered = io.BytesIO()
-    grid_img.save(buffered, format="JPEG", quality=95)
-    return buffered.getvalue()
+    grid_img.save(output_path, quality=95)  # Save with high quality
+    return output_path
 
 def send_request_to_openai(grid_image_base64, user_prompt):
     messages = [{
-        "role": "user", 
+        "role": "user",
         "content": [
             {"type": "text", "text": "The image shows video frames in sequence, but this time refer to it as a short clip, not individual frames."},
             {"type": "text", "text": user_prompt},
@@ -438,7 +439,8 @@ def handle_file_upload():
                 if len(st.session_state.image_bundles) == 4 or len(uploaded_files) == st.session_state.file_uploader.index(uploaded_file) + 1:
                     st.session_state.conversations[st.session_state.current_conversation].append({
                         "role": "user",
-                        "content": [{"type": "text", "text": "What’s in these images?"}] + [{"type": "image_url", "image_url": {"url": img}} for img in st.session_state.image_bundles
+                        "content": [{"type": "text", "text": "What’s in these images?"}] + [
+                            {"type": "image_url", "image_url": {"url": img}} for img in st.session_state.image_bundles
                         ],
                         "images": st.session_state.image_bundles
                     })
@@ -456,34 +458,31 @@ def handle_file_upload():
                     st.session_state.is_processing = False
                     return
 
-                # Extract the frames in memory
-                frames = extract_frames_in_memory(io.BytesIO(file_contents), num_frames=15)
+                # Save the video file temporarily
+                video_temp_path = os.path.join("temp_videos", uploaded_file.name)
+                os.makedirs(os.path.dirname(video_temp_path), exist_ok=True)
+                with open(video_temp_path, "wb") as f:
+                    f.write(file_contents)
 
-                # Create the image grid in memory
-                grid_image_bytes = create_image_grid_in_memory(frames)
+                # Encode the video to base64
+                video_base64 = base64.b64encode(file_contents).decode("utf-8")
+                video_url = f"data:video/{uploaded_file.name.split('.')[-1]};base64,{video_base64}"
 
-                # Encode the grid image to base64
-                grid_image_base64 = base64.b64encode(grid_image_bytes).decode("utf-8")
+                st.session_state.conversations[st.session_state.current_conversation].append({
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": "What’s in this video?"},
+                        {"type": "video_url", "video_url": {"url": video_url, "detail": "high"}}
+                    ],
+                    "video_url": video_url
+                })
 
-                # Send the request to the API
-                response = send_request_to_openai(grid_image_base64, "What is shown in this video?")
-
-                if response:
-                    st.session_state.conversations[st.session_state.current_conversation].append({
-                        "role": "assistant",
-                        "content": response.strip(),
-                        "video_url": f"data:video/{filename.split('.')[-1]};base64,{base64.b64encode(file_contents).decode('utf-8')}"
-                    })
-                    st.session_state.all_conversations[st.session_state.username] = st.session_state.conversations
-                else:
-                    st.toast("Error processing video.", icon="❌")
-
+                st.session_state.all_conversations[st.session_state.username] = st.session_state.conversations
                 st.session_state.is_processing = False
                 save_and_rerun()
 
             else:
                 st.toast("Only text, image, and video files like .py, .txt, .json, .jpg, .jpeg, .png, .pdf, .docx, .mp4, .avi, .mov etc. are allowed.", icon="❌")
-                st.session_state.is_processing = False
 
 def reset_current_conversation():
     st.session_state.conversations[st.session_state.current_conversation] = [{"role": "assistant", "content": "Hello! How can I help you today?"}]
