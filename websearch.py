@@ -1,68 +1,50 @@
-import base64
+import requests
+import json
 import os
 import datetime
-import io
-import json
-from PIL import Image
-import numpy as np
+import base64
 import streamlit as st
+from PIL import Image
+import io
+import numpy as np
+import extra_streamlit_components as stx
 import streamlit.components.v1 as components
 from requests_toolbelt.multipart.encoder import MultipartEncoder
-import requests
 from PyPDF2 import PdfReader
 import docx
 import tiktoken
 from bs4 import BeautifulSoup
 from requests.utils import default_headers
-import ffmpeg
-import extra_streamlit_components as stx
 
-# Function to encode an image to Base64 format
-def encode_image(image):
-    buffered = io.BytesIO()
-    image.save(buffered, format="JPEG")
-    return base64.b64encode(buffered.getvalue()).decode('utf-8')
+INITIAL_MESSAGE = {"role": "assistant", "content": "Hello! How can I help you today?"}
 
-# Function to extract frames from a video
-def extract_frames(video_bytes, num_frames=15):
-    probe = ffmpeg.probe(video_bytes)
-    duration = float(probe['format']['duration'])
-    interval = duration / num_frames
+# Define context window limits for models
+MODEL_CONTEXT_LIMITS = {
+    "gpt-4o": 128000,
+    "gpt-4-turbo-2024-04-09": 128000,
+    "gpt-4-turbo": 128000,
+    "gpt-4": 8192,
+    "gpt-3.5-turbo": 16384,
+}
 
-    frames = []
-    for i in range(num_frames):
-        frame_path = f"frame_{i:03d}.jpg"
-        (
-            ffmpeg.input(video_bytes, ss=i * interval)
-            .output(frame_path, vframes=1, format='image2', vcodec='mjpeg')
-            .run(capture_stdout=True, capture_stderr=True)
-        )
-        frames.append(frame_path)
-    return frames
+# Streamlit page config
+st.set_page_config(
+    page_title="Lumiere",
+    page_icon="🐈‍⬛",
+    layout="wide",
+)
 
-# Function to create a grid image from multiple frames
-def create_image_grid(image_paths, grid_size=(5, 3), output_path="grid_image.jpg"):
-    images = [Image.open(img_path) for img_path in image_paths]
-    widths, heights = zip(*(i.size for i in images))
-    max_width = max(widths)
-    max_height = max(heights)
+# Hide main menu and footer
+hide_streamlit_style = """
+    <style>
+    #MainMenu {visibility: hidden;}
+    footer {visibility: hidden;}
+    header {visibility: hidden;}
+    </style>
+    """
+st.markdown(hide_streamlit_style, unsafe_allow_html=True)
 
-    grid_width = max_width * grid_size[0]
-    grid_height = max_height * grid_size[1]
-
-    grid_img = Image.new('RGB', (grid_width, grid_height))
-
-    for idx, img in enumerate(images):
-        row = idx // grid_size[0]
-        col = idx % grid_size[0]
-        grid_img.paste(img, (col * max_width, row * max_height))
-
-    grid_img.save(output_path, quality=95)
-    return output_path
-
-# Class to handle chat functionalities
 class Chatbot:
-    # Initialize chatbot
     def __init__(self):
         self.api_url = "https://omniplex.ai/api/chat"
         self.model = "gpt-4o"
@@ -80,7 +62,7 @@ class Chatbot:
                 if site:
                     queries = [f"site:{site} {query}" for query in queries]
 
-                scraped_results_json = scrape_and_process_results(queries, 3)
+                scraped_results_json = scrape_and_process_results(queries, 3)  # Scrape top 3 results for each query
 
                 current_time = datetime.datetime.now(datetime.timezone.utc).strftime("%a, %d %b %Y, %H:%M:%S UTC")
                 user_name = st.session_state.username
@@ -121,35 +103,14 @@ ONLY cite sources from search results below. DO NOT add any other links other th
                 if chunk:
                     chunk_str = chunk.decode("utf-8")
                     response_text += chunk_str
-                    yield response_text + typing_indicator
+                    yield response_text + typing_indicator  # Include typing indicator
             chat_history.append({"role": "assistant", "content": response_text})
             return chat_history
         else:
             yield f"Error: {response.status_code}"
 
-# Initialization code
-INITIAL_MESSAGE = {"role": "assistant", "content": "Hello! How can I help you today?"}
-MODEL_CONTEXT_LIMITS = {
-    "gpt-4o": 128000,
-    "gpt-4-turbo-2024-04-09": 128000,
-    "gpt-4-turbo": 128000,
-    "gpt-4": 8192,
-    "gpt-3.5-turbo": 16384,
-}
+# File path for storing the conversation data
 DATA_FILE = "conversations.json"
-
-# Streamlit page config
-st.set_page_config(page_title="Lumiere", page_icon="🐈‍⬛", layout="wide")
-
-# Hide main menu and footer
-hide_streamlit_style = """
-    <style>
-    #MainMenu {visibility: hidden;}
-    footer {visibility: hidden;}
-    header {visibility: hidden;}
-    </style>
-    """
-st.markdown(hide_streamlit_style, unsafe_allow_html=True)
 
 def get_manager():
     return stx.CookieManager()
@@ -240,13 +201,12 @@ def display_chat(conversation_name):
                     st.text(message["file_contents"])
             elif "images" in message:
                 for image in message["images"]:
+                    # Safely decode and display the base64 image
                     try:
                         image_data = image.split(",")[1]
                         st.image(base64.b64decode(image_data), caption="Uploaded Image")
                     except IndexError:
                         st.toast("Error displaying image: Invalid base64 string.", icon="❌")
-            elif "video" in message:
-                st.video(message["video"])
             else:
                 st.markdown(message["content"])
 
@@ -267,7 +227,7 @@ def login():
         if username not in st.session_state.all_conversations:
             st.session_state.all_conversations[username] = {}
         st.session_state.conversations = st.session_state.all_conversations[username]
-        create_new_conversation()
+        create_new_conversation()  # Create new conversation upon login
     else:
         st.toast("Invalid username or password", icon="❌")
 
@@ -284,7 +244,7 @@ def signup():
         st.session_state.all_conversations[username] = {}
         st.session_state.username = username
         st.session_state.conversations = st.session_state.all_conversations[username]
-        create_new_conversation()
+        create_new_conversation()  # Create new conversation upon signup
     else:
         st.toast("Username already taken", icon="❌")
 
@@ -300,15 +260,35 @@ def delete_cookies_script():
     """
 
 def logout():
+    # Clear session state related to user information and chat
     keys_to_clear = ["username", "current_conversation", "is_processing", "conversations"]
     for key in keys_to_clear:
         if key in st.session_state:
             del st.session_state[key]
 
+    # Attempt to delete the cookie using a script
     components.html(delete_cookies_script())
+
+    # Optional: Stop further execution to allow page reload
     st.stop()
+
+    # Debug logging
     st.write("Logging out: session state and cookies should be cleared now.")
     st.rerun()
+
+def compress_image(image, max_size=1 * 1024 * 1024):
+    img = Image.open(image)
+    quality = 95
+    buffered = io.BytesIO()
+    img_format = img.format or "JPEG"
+    while True:
+        buffered.seek(0)
+        img.save(buffered, format=img_format, quality=quality)
+        size = buffered.getbuffer().nbytes
+        if size <= max_size or quality == 10:
+            break
+        quality -= 5
+    return buffered.getvalue()
 
 def compress_image(image, max_size=1 * 1024 * 1024):
     img = Image.open(image)
@@ -330,41 +310,12 @@ def send_image_multipart(file_name, file_content):
             "file": (file_name, file_content, "image/jpeg")
         }
     )
+
     response = requests.post("https://omniplex.ai/api/chat", data=m, headers={"Content-Type": m.content_type})
     if response.status_code == 200:
         st.toast("Image uploaded successfully", icon="✅")
     else:
         st.toast("Image uploaded", icon="✅")
-
-def process_video_upload(uploaded_file):
-    video_bytes = uploaded_file.read()
-
-    # Display video preview
-    st.video(video_bytes)
-
-    # Extract frames and create an image grid
-    frames = extract_frames(io.BytesIO(video_bytes), num_frames=15)
-    grid_image_path = create_image_grid(frames)
-
-    # Encode the grid image to base64
-    grid_image = Image.open(grid_image_path)
-    encoded_grid_image = encode_image(grid_image)
-
-    st.session_state.conversations[st.session_state.current_conversation].append({
-        "role": "user",
-        "content": [{"type": "text", "text": "What’s in this video?"}],
-        "images": [f"data:image/jpeg;base64,{encoded_grid_image}"],
-        "video": video_bytes
-    })
-    st.session_state.all_conversations[st.session_state.username] = st.session_state.conversations
-
-    # Clean up frame files
-    for frame_path in frames:
-        os.remove(frame_path)
-    os.remove(grid_image_path)
-
-    st.session_state.is_processing = False
-    save_and_rerun()
 
 def handle_file_upload():
     selected_model = st.session_state.selected_model
@@ -375,6 +326,7 @@ def handle_file_upload():
     if uploaded_files:
         st.session_state.is_processing = True
 
+        # Define encoding using tiktoken
         encoding = tiktoken.encoding_for_model(selected_model)
 
         for uploaded_file in uploaded_files:
@@ -387,9 +339,9 @@ def handle_file_upload():
                 ".pdf", ".docx"
             ]
             valid_image_extensions = ["jpg", "jpeg", "png"]
-            valid_video_extensions = ["mp4", "avi", "mov"]
 
             if any(filename.endswith(ext) for ext in valid_text_extensions):
+                # Extract text based on file type
                 if filename.endswith(".pdf"):
                     extracted_text = extract_text_from_pdf(file_contents)
                 elif filename.endswith(".docx"):
@@ -421,13 +373,16 @@ def handle_file_upload():
                 save_and_rerun()
 
             elif any(filename.endswith(ext) for ext in valid_image_extensions):
+                # Only allow image uploads for models that support image input
                 allowed_models = {"gpt-4o", "gpt-4", "gpt-4-turbo", "gpt-4-turbo-2024-04-09"}
                 if selected_model not in allowed_models:
                     st.toast("Image uploads are only supported by models that accept image inputs.", icon="⚠️")
                     st.session_state.is_processing = False
                     return
 
+                # Compress image if necessary
                 file_contents = compress_image(io.BytesIO(file_contents))
+
                 send_image_multipart(uploaded_file.name, file_contents)
 
                 encoded_image = base64.b64encode(file_contents).decode("utf-8")
@@ -451,17 +406,8 @@ def handle_file_upload():
 
                     st.session_state.is_processing = False
                     save_and_rerun()
-            elif any(filename.endswith(ext) for ext in valid_video_extensions):
-                allowed_models = {"gpt-4o", "gpt-4", "gpt-4-turbo", "gpt-4-turbo-2024-04-09"}
-                if selected_model not in allowed_models:
-                    st.toast("Video uploads are only supported by models that accept video inputs.", icon="⚠️")
-                    st.session_state.is_processing = False
-                    return
-
-                # Process the video upload
-                process_video_upload(uploaded_file)
             else:
-                st.toast("Only text-based files, image files, and video files like .py, .txt, .json, .js, .jpg, .jpeg, .png, .pdf, .docx, .mp4, .avi, .mov are allowed.", icon="❌")
+                st.toast("Only text-based files and image files like .py, .txt, .json, .js, .jpg, .jpeg, .png, .pdf, .docx etc. are allowed.", icon="❌")
 
 def reset_current_conversation():
     st.session_state.conversations[st.session_state.current_conversation] = [{"role": "assistant", "content": "Hello! How can I help you today?"}]
@@ -469,21 +415,46 @@ def reset_current_conversation():
     save_and_rerun()
 
 def count_tokens(message, encoding):
+    # Handle special tokens by allowing them
     try:
         return len(encoding.encode(message, disallowed_special=()))
     except ValueError as e:
         st.toast(f"Tokenization error: {str(e)}", icon="❌")
-        return float("inf")
+        return float("inf")  # Return a large number to prevent processing the message
 
 def generate_search_query(query, chat_history):
     current_time = datetime.datetime.now(datetime.timezone.utc).strftime("%a, %d %b %Y, %H:%M:%S UTC")
     prompt = f"""## Additional Context
 - The date and time is {current_time}.
-- Do not generate any other texts or messages other than the search queries, do not engage in a conversation. You are not a chatbot, an AI, an assistant or any other form. NEVER EVER SAY ANYTHING ELSE, OTHER THAN THE SEARCH QUERY. YOU ARE NOT A CHATBOT OR AN ASSISTANT. YOU ARE A QUERY GENERATION SYSTEM.
+- Do not generate any other texts or messages other than the search queries, do not engage in a conversation. You are not a chatbot, an AI, an assistant or any other form. (IMPORTANT). NEVER EVER SAY ANYTHING ELSE, OTHER THAN THE SEARCH QUERY. YOU ARE NOT A CHATBOT OR AN ASSISTANT. YOU ARE A QUERY GENERATION SYSTEM.
 
-## You are a query generation system. Your knowledge cutoff date is August 2023.
+## You are a query generation system designed solely to provide relevant search queries based on the user's input. If the input does not require up-to-date information or refers to something that refers to something beyond your knowledge base, you may generate 1-3 focused search queries separated by newlines when needed. Your knowledge cutoff date is August 2023.
 
-If the input is a factual query or requires up-to-date information, generate 1-3 focused search queries. For casual conversation, thank you messages, or statements, respond with "c". Use formal language and keep the queries concise, avoiding unnecessary details.
+## If the input is a casual conversation, a statement, an opinion, a thank you message, or any other input that does not require a factual search query response, you must respond with "c". Do not attempt to engage in conversation or provide any other responses.
+
+## However, if the input is a factual query requiring the most current information, data that may have changed since August 2023, or something unfamiliar to you, you may generate 1-3 concise and focused Google search queries separated by newlines to retrieve relevant up-to-date information when a single query is insufficient.
+
+## Generate multiple queries only if the question is complex and broad, requiring additional context or perspectives for a comprehensive answer. For simple factual queries, a single focused query should suffice.
+
+## When generating search queries, strictly adhere to these guidelines:
+
+- Keep it Simple:
+Google search is intelligent, so you don't need to be overly specific. For example, to find nearby pizza places, use: "Pizza places near me"
+
+- Use Professional WebsiteTerminology:
+Websites often use formal language, unlike casual speech. For better results, use terms found on professional websites. For example:
+- Instead of "I have a flat tire", use "repair a flat tire".
+- Instead of "My head hurts", use "headache remedies".
+
+- Use Important Keywords Only:
+Google search is intelligent, so you don't need to be overly specific. Using too many words may limit results and make it harder to find what you need. Use only the most important keywords when searching. For example:
+- Don't use: "Where can I find a Chinese restaurant that delivers?"
+- Instead, try: "Chinese takeout near me"
+
+- Use Descriptive Words:
+Things can be described in multiple ways. If you struggle to find what you're searching for, rephrase the query using different descriptive words. For example, instead of "How to install drivers in Ubuntu?", try "Ubuntu driver installation troubleshooting".
+
+## You are strictly a query generation system. You do not engage in conversation or provide any other responses besides outputting focused search queries or "c". You have no additional capabilities.
 
 Input: can you help me study
 Output: c
@@ -498,12 +469,22 @@ Output: python programming tutorials for beginners
 learn python coding
 Input: Thank you for your help!
 Output: c
-"""
+Input: Tell me a joke.
+Output: c
+Input: What are some healthy dinner recipes?
+Output: healthy dinner recipes\neasy healthy meals
+Input: I want to buy a new laptop, what are the best options in 2024?
+Output: best laptops 2024\nlaptop reviews 2024
+Input: Can you recommend a good plumber in Chicago?
+Output: chicago plumbers\nplumbing services chicago
+Input: How do I install the latest graphics drivers for my NVIDIA GPU on Ubuntu 22.04?
+Output: install nvidia graphics drivers ubuntu 22.04\nubuntu 22.04 nvidia driver installation"""
 
+    # Send prompt to Omniplex
     url = "https://omniplex.ai/api/chat"
     headers = {'Content-Type': 'application/json'}
     payload = {
-        "messages": [{"role": "system", "content": prompt}] + chat_history + [{"role": "user", "content": "Generate a search query based on this input, do not engage in a conversation or provide commentary. Do not respond with anything other than the search query. Input: " + query}],
+        "messages": [{"role": "system", "content": prompt}] + chat_history + [{"role": "user", "content": "Generate a search query based on this input, do not engage in a conversation, no commentary, you are not a conversational chatbot or an assistant. Do not say anything else, or respond with other messages other than the search query, If the input is a casual conversation, a statement, an opinion, a thank you message, or any other input that does not require a factual search query response, you must respond only with 'c'. Do not attempt to engage in conversation or provide any other responses. Here's my input: " + query}],
         "model": "gpt-4o",
         "temperature": 0.7,
         "max_tokens": 4096,
@@ -531,6 +512,16 @@ def omniplex_search(query):
     }
     headers = {
         'User-Agent': "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36",
+        'authority': "omniplex.ai",
+        'accept-language': "en-PH,en-US;q=0.9,en;q=0.8",
+        'referer': "https://omniplex.ai/chat/Wk3rQUxprd",
+        'sec-ch-ua': "\"Not-A.Brand\";v=\"99\", \"Chromium\";v=\"124\"",
+        'sec-ch-ua-mobile': "?1",
+        'sec-ch-ua-platform': "\"Android\"",
+        'sec-fetch-dest': "empty",
+        'sec-fetch-mode': "cors",
+        'sec-fetch-site': "same-origin",
+        'Cookie': "_ga=GA1.1.1059292211.1715883464; _clck=fw8ekm%7C2%7Cflx%7C0%7C1597; _ga_4L0TGM4R80=GS1.1.1716182640.5.1.1716184046.0.0.0; _clsk=z2swc6%7C1716184049711%7C8%7C1%7Cu.clarity.ms%2Fcollect"
     }
     response = requests.get(url, params=params, headers=headers)
 
@@ -549,6 +540,18 @@ def omniplex_scrape(urls):
     }
     headers = {
         'User-Agent': "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36",
+        'authority': "omniplex.ai",
+        'accept-language': "en-PH,en-US;q=0.9,en;q=0.8",
+        'content-type': "application/json",
+        'origin': "https://omniplex.ai",
+        'referer': "https://omniplex.ai/chat/Wk3rQUxprd",
+        'sec-ch-ua': "\"Not-A.Brand\";v=\"99\", \"Chromium\";v=\"124\"",
+        'sec-ch-ua-mobile': "?1",
+        'sec-ch-ua-platform': "\"Android\"",
+        'sec-fetch-dest': "empty",
+        'sec-fetch-mode': "cors",
+        'sec-fetch-site': "same-origin",
+        'Cookie': "_ga=GA1.1.1059292211.1715883464; _clck=fw8ekm%7C2%7Cflx%7C0%7C1597; _ga_4L0TGM4R80=GS1.1.1716182640.5.1.1716184046.0.0.0; _clsk=z2swc6%7C1716184064563%7C9%7C1%7Cu.clarity.ms%2Fcollect"
     }
     response = requests.post(url, params=params, headers=headers)
 
@@ -562,11 +565,11 @@ def scrape_and_process_results(queries, max_results_per_query):
     all_results_json = []
     num_queries = len(queries)
     if num_queries == 3:
-        max_results_per_query = 2
+        max_results_per_query = 2  # Top 1 result for each query if there are 3 queries
     elif num_queries == 2:
-        max_results_per_query = 3
+        max_results_per_query = 3  # Top 2 results for each query if there are 2 queries
     else:
-        max_results_per_query = 4
+        max_results_per_query = 4  # Top 3 results for single query
 
     for query_idx, query in enumerate(queries):
         urls = omniplex_search(query)
@@ -577,9 +580,9 @@ def scrape_and_process_results(queries, max_results_per_query):
                 results_json.append({
                     "index": idx + query_idx * max_results_per_query,
                     "url": url,
-                    "content": scraped_data
+                    "content": scraped_data  # Assuming omniplex_scrape returns text for each URL
                 })
-            all_results_json.extend(results_json)
+            all_results_json.extend(results_json)  # Use extend to combine lists
     return json.dumps(all_results_json)
 
 initialize_session_state()
@@ -588,7 +591,7 @@ def generate_title(prompt):
     url = "https://omniplex.ai/api/chat"
     headers = {'Content-Type': 'application/json'}
     payload = {
-        "messages": [{"role": "system", "content": "Generate a short conversation title based on the user's message. Provide only the title without additional text or commentary."},
+        "messages": [{"role": "system", "content": "Generate a very short conversation title based on the user's message. Provide only the title without any additional text or commentary. Do not say anything else or add any other texts. Only the generated title without any quotation marks."},
                      {"role": "user", "content": prompt}],
         "model": "gpt-4o",
         "temperature": 0.5,
@@ -601,7 +604,7 @@ def generate_title(prompt):
     response = requests.post(url, headers=headers, json=payload)
     if response.status_code == 200:
         title = response.text.strip()
-        return title
+        return title  # Return the title directly
     else:
         st.toast(f"Error generating title: {response.status_code}", icon="❌")
         return "Untitled"
@@ -612,7 +615,6 @@ def create_new_conversation():
     st.session_state.current_conversation = new_chat_name
     save_and_rerun()
 
-# Main UI function
 def main_ui():
     if st.session_state.username is None:
         tab1, tab2 = st.tabs(["Login", "Signup"])
@@ -629,6 +631,7 @@ def main_ui():
                 st.text_input("Password", type="password", key="password_signup")
                 st.form_submit_button("Sign up", on_click=signup)
     else:
+        # Automatically create a "New Chat" if there are no existing conversations
         if not st.session_state.conversations:
             create_new_conversation()
         current_conversation = st.session_state.current_conversation
@@ -641,13 +644,15 @@ def main_ui():
                 st.session_state.current_conversation = None
                 current_conversation = None
 
+        # Sidebar
         with st.sidebar:
             st.header(f"Welcome to Lumiere, {st.session_state.username}.")
 
-            st.file_uploader("Upload files (text, images, videos)", type=[
+            # File upload
+            st.file_uploader("Upload files (text or images, max 4)", type=[
                 "py", "txt", "json", "js", "css", "html", "xml", "csv", "tsv", "yaml", "yml",
                 "ini", "md", "log", "bat", "sh", "java", "c", "cpp", "h", "hpp", "cs", "go",
-                "rb", "swift", "kt", "kts", "rs", "jpg", "jpeg", "png", "pdf", "docx", "mp4", "avi", "mov"
+                "rb", "swift", "kt", "kts", "rs", "jpg", "jpeg", "png", "pdf", "docx"
             ], key="file_uploader", accept_multiple_files=True, on_change=handle_file_upload)
 
             create_button = st.button("➕", on_click=create_new_conversation)
@@ -670,11 +675,13 @@ def main_ui():
 
             with st.expander("Settings"):
                 websearch = st.checkbox("Web Search", value=True)
+
+                # Add Site input field
                 site = st.text_input("Site", placeholder="stackoverflow.com", key="site_input")
 
                 available_models = list(MODEL_CONTEXT_LIMITS.keys())
                 selected_model = st.selectbox("Choose Model", available_models, index=available_models.index("gpt-4o"), disabled=st.session_state.is_processing)
-                st.session_state.selected_model = selected_model
+                st.session_state.selected_model = selected_model  # Store the selected model in session state
 
                 temperature = st.slider("Temperature", 0.0, 1.0, 1.0, step=0.1, disabled=st.session_state.is_processing)
                 max_tokens = st.slider("Max Tokens", 100, 4096, 4096, step=100, disabled=st.session_state.is_processing)
@@ -699,6 +706,7 @@ def main_ui():
                 else:
                     st.session_state.is_processing = True
 
+                    # Generate title for the first user message in a new chat
                     if current_conversation == "New Chat":
                         title = generate_title(user_input)
                         st.session_state.conversations[title] = st.session_state.conversations.pop(current_conversation)
@@ -739,7 +747,7 @@ def main_ui():
                     typing_indicator = " |"
 
                     for chunk in chatbot.send_message(st.session_state.conversations[current_conversation], content_to_send, websearch=websearch):
-                        response_text = chunk.replace(typing_indicator, "")
+                        response_text = chunk.replace(typing_indicator, "")  # Temporary display without indicator
                         response_placeholder.markdown(response_text + typing_indicator, unsafe_allow_html=True)
 
                     response_placeholder.markdown(response_text, unsafe_allow_html=True)
@@ -748,4 +756,5 @@ def main_ui():
                 st.session_state.all_conversations[st.session_state.username] = st.session_state.conversations
                 save_and_rerun()
 
+# Run the main UI
 main_ui()
