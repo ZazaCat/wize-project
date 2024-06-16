@@ -1,3 +1,4 @@
+import base64
 import requests
 import json
 import os
@@ -15,6 +16,10 @@ import docx
 import tiktoken
 from bs4 import BeautifulSoup
 from requests.utils import default_headers
+import aiohttp
+import re
+import asyncio
+import ffmpeg
 
 INITIAL_MESSAGE = {"role": "assistant", "content": "Hello! How can I help you today?"}
 
@@ -62,7 +67,8 @@ class Chatbot:
                 if site:
                     queries = [f"site:{site} {query}" for query in queries]
 
-                scraped_results_json = scrape_and_process_results(queries, 3)  # Scrape top 3 results for each query
+                loop = asyncio.get_event_loop()
+                scraped_results_text = loop.run_until_complete(scrape_and_process_results(queries, 3))  # Scrape top 3 results for each query
 
                 current_time = datetime.datetime.now(datetime.timezone.utc).strftime("%a, %d %b %Y, %H:%M:%S UTC")
                 user_name = st.session_state.username
@@ -81,7 +87,7 @@ Write more than 100 words (2 paragraphs).
 ALWAYS use the exact cite format provided.
 ONLY cite sources from search results below. DO NOT add any other links other than the search results below
 
-{scraped_results_json}
+{scraped_results_text}
 """
 
         payload = {
@@ -207,6 +213,9 @@ def display_chat(conversation_name):
                         st.image(base64.b64decode(image_data), caption="Uploaded Image")
                     except IndexError:
                         st.toast("Error displaying image: Invalid base64 string.", icon="❌")
+            elif "video_url" in message:
+                # Display video if video URL is present
+                st.video(message["video_url"])
             else:
                 st.markdown(message["content"])
 
@@ -290,32 +299,68 @@ def compress_image(image, max_size=1 * 1024 * 1024):
         quality -= 5
     return buffered.getvalue()
 
-def compress_image(image, max_size=1 * 1024 * 1024):
-    img = Image.open(image)
-    quality = 95
-    buffered = io.BytesIO()
-    img_format = img.format or "JPEG"
-    while True:
-        buffered.seek(0)
-        img.save(buffered, format=img_format, quality=quality)
-        size = buffered.getbuffer().nbytes
-        if size <= max_size or quality == 10:
-            break
-        quality -= 5
-    return buffered.getvalue()
+def encode_image(image_path):
+    with open(image_path, "rb") as image_file:
+        return base64.b64encode(image_file.read()).decode('utf-8')
 
-def send_image_multipart(file_name, file_content):
-    m = MultipartEncoder(
-        fields={
-            "file": (file_name, file_content, "image/jpeg")
-        }
-    )
+def extract_frames(video_path, num_frames=15):
+    probe = ffmpeg.probe(video_path)
+    duration = float(probe['format']['duration'])
+    interval = duration / num_frames
 
-    response = requests.post("https://omniplex.ai/api/chat", data=m, headers={"Content-Type": m.content_type})
-    if response.status_code == 200:
-        st.toast("Image uploaded successfully", icon="✅")
-    else:
-        st.toast("Image uploaded", icon="✅")
+    frames = []
+    for i in range(num_frames):
+        frame_path = f"frame_{i:03d}.jpg"
+        (
+            ffmpeg.input(video_path, ss=i * interval)
+            .output(frame_path, vframes=1, format='image2', vcodec='mjpeg')
+            .run(capture_stdout=True, capture_stderr=True)
+        )
+        frames.append(frame_path)
+    return frames
+
+def create_image_grid(image_paths, grid_size=(5, 3), output_path="grid_image.jpg"):
+    images = [Image.open(img_path) for img_path in image_paths]
+    widths, heights = zip(*(i.size for i in images))
+    max_width = max(widths)
+    max_height = max(heights)
+
+    grid_width = max_width * grid_size[0]
+    grid_height = max_height * grid_size[1]
+
+    grid_img = Image.new('RGB', (grid_width, grid_height))
+
+    for idx, img in enumerate(images):
+        row = idx // grid_size[0]
+        col = idx % grid_size[0]
+        grid_img.paste(img, (col * max_width, row * max_height))
+
+    grid_img.save(output_path, quality=95)  # Save with high quality
+    return output_path
+
+def send_request_to_openai(grid_image_base64, user_prompt):
+    messages = [{
+        "role": "user",
+        "content": [
+            {"type": "text", "text": "The image shows video frames in sequence, but this time refer to it as a short clip, not individual frames."},
+            {"type": "text", "text": user_prompt},
+            {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{grid_image_base64}", "detail": "high"}}
+        ]
+    }]
+
+    payload = json.dumps({
+        "model": "gpt-4o",
+        "messages": messages,
+        "max_tokens": 4096
+    })
+
+    try:
+        response = requests.post("https://omniplex.ai/api/chat", data=payload, headers={'Content-Type': 'application/json'})
+        response.raise_for_status()  
+        return response.text
+    except requests.exceptions.RequestException as e:
+        st.toast(f"Request failed: {e}", icon="❌")
+        return None
 
 def handle_file_upload():
     selected_model = st.session_state.selected_model
@@ -339,6 +384,7 @@ def handle_file_upload():
                 ".pdf", ".docx"
             ]
             valid_image_extensions = ["jpg", "jpeg", "png"]
+            valid_video_extensions = ["mp4", "avi", "mov"]
 
             if any(filename.endswith(ext) for ext in valid_text_extensions):
                 # Extract text based on file type
@@ -406,8 +452,59 @@ def handle_file_upload():
 
                     st.session_state.is_processing = False
                     save_and_rerun()
+
+            elif any(filename.endswith(ext) for ext in valid_video_extensions):
+                # Handle video uploads
+                if selected_model not in {"gpt-4o", "gpt-4", "gpt-4-turbo", "gpt-4-turbo-2024-04-09"}:
+                    st.toast("Video uploads are only supported by models that accept video input.", icon="⚠️")
+                    st.session_state.is_processing = False
+                    return
+
+                video_path = uploaded_file.name
+                with open(video_path, 'wb') as f:
+                    f.write(file_contents)
+
+                try:
+                    # Extract frames from the video
+                    frames = extract_frames(video_path, num_frames=15)
+                    grid_image_path = create_image_grid(frames)
+
+                    # Encode the grid image
+                    encoded_grid_image = encode_image(grid_image_path)
+
+                    # Request a response based on the grid image
+                    user_prompt = "What’s in this video clip?"
+                    response = send_request_to_openai(encoded_grid_image, user_prompt)
+
+                    if response:
+                        st.session_state.conversations[st.session_state.current_conversation].append({
+                            "role": "user",
+                            "content": [
+                                {"type": "text", "text": user_prompt},
+                                {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{encoded_grid_image}", "detail": "high"}}
+                            ]
+                        })
+                        st.session_state.conversations[st.session_state.current_conversation].append({
+                            "role": "assistant",
+                            "content": response.strip(),
+                        })
+                        st.session_state.all_conversations[st.session_state.username] = st.session_state.conversations
+
+                        st.session_state.is_processing = False
+                        save_and_rerun()
+
+                    # Clean up the frames and grid image files
+                    for frame_path in frames:
+                        os.remove(frame_path)
+                    os.remove(grid_image_path)
+                    os.remove(video_path)
+
+                except Exception as e:
+                    st.toast(f"Error processing video {uploaded_file.name}: {str(e)}", icon="❌")
+                    st.session_state.is_processing = False
+                    return
             else:
-                st.toast("Only text-based files and image files like .py, .txt, .json, .js, .jpg, .jpeg, .png, .pdf, .docx etc. are allowed.", icon="❌")
+                st.toast("Only text, image, and video files like .py, .txt, .json, .jpg, .jpeg, .png, .pdf, .docx, .mp4, .avi, .mov etc. are allowed.", icon="❌")
 
 def reset_current_conversation():
     st.session_state.conversations[st.session_state.current_conversation] = [{"role": "assistant", "content": "Hello! How can I help you today?"}]
@@ -533,54 +630,64 @@ def omniplex_search(query):
         print(f"Error: {response.status_code} - {response.text}")
         return []
 
-def omniplex_scrape(urls):
-    url = "https://omniplex.ai/api/scrape"
-    params = {
-        'urls': ",".join(urls)
-    }
-    headers = {
-        'User-Agent': "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36",
-        'authority': "omniplex.ai",
-        'accept-language': "en-PH,en-US;q=0.9,en;q=0.8",
-        'content-type': "application/json",
-        'origin': "https://omniplex.ai",
-        'referer': "https://omniplex.ai/chat/Wk3rQUxprd",
-        'sec-ch-ua': "\"Not-A.Brand\";v=\"99\", \"Chromium\";v=\"124\"",
-        'sec-ch-ua-mobile': "?1",
-        'sec-ch-ua-platform': "\"Android\"",
-        'sec-fetch-dest': "empty",
-        'sec-fetch-mode': "cors",
-        'sec-fetch-site': "same-origin",
-        'Cookie': "_ga=GA1.1.1059292211.1715883464; _clck=fw8ekm%7C2%7Cflx%7C0%7C1597; _ga_4L0TGM4R80=GS1.1.1716182640.5.1.1716184046.0.0.0; _clsk=z2swc6%7C1716184064563%7C9%7C1%7Cu.clarity.ms%2Fcollect"
-    }
-    response = requests.post(url, params=params, headers=headers)
-
-    if response.status_code == 200:
-        return response.text
-    else:
-        print(f"Error: {response.status_code} - {response.text}")
+async def scrape_text(url: str) -> str:
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url) as response:
+                if response.status != 200:
+                    raise Exception(f"HTTP error! status: {response.status}")
+                html = await response.text()
+                text = extract_body_text(html)
+                return text
+    except Exception as e:
+        print(f"Error fetching URL {url}:", e)
         return ""
 
-def scrape_and_process_results(queries, max_results_per_query):
+def extract_body_text(html: str) -> str:
+    soup = BeautifulSoup(html, 'html.parser')
+    body = soup.find('body')
+    if body:
+        for script_or_style in body(['script', 'style']):
+            script_or_style.decompose()
+        text = re.sub(r'\s+', ' ', body.get_text()).strip()
+        return text
+    return ""
+
+async def scrape_urls(urls):
+    scraping_tasks = []
+    for url in urls:
+        if url in cache:
+            scraping_tasks.append(asyncio.create_task(asyncio.sleep(0, result=cache[url])))
+        else:
+            scraping_tasks.append(scrape_text(url))
+
+    results = await asyncio.gather(*scraping_tasks)
+
+    for url, result in zip(urls, results):
+        cache[url] = result
+
+    return results
+
+async def scrape_and_process_results(queries, max_results_per_query):
     all_results_json = []
     num_queries = len(queries)
     if num_queries == 3:
-        max_results_per_query = 2  # Top 1 result for each query if there are 3 queries
+        max_results_per_query = 2  # Top 2 results for each query if there are 3 queries
     elif num_queries == 2:
-        max_results_per_query = 3  # Top 2 results for each query if there are 2 queries
+        max_results_per_query = 3  # Top 3 results for each query if there are 2 queries
     else:
-        max_results_per_query = 4  # Top 3 results for single query
+        max_results_per_query = 4  # Top 4 results for single query
 
     for query_idx, query in enumerate(queries):
         urls = omniplex_search(query)
         if urls:
-            scraped_data = omniplex_scrape(urls[:max_results_per_query])
+            scraped_data_list = await scrape_urls(urls[:max_results_per_query])
             results_json = []
-            for idx, url in enumerate(urls[:max_results_per_query], start=1):
+            for idx, (url, content) in zip(urls[:max_results_per_query], scraped_data_list, start=1):
                 results_json.append({
                     "index": idx + query_idx * max_results_per_query,
                     "url": url,
-                    "content": scraped_data  # Assuming omniplex_scrape returns text for each URL
+                    "content": content
                 })
             all_results_json.extend(results_json)  # Use extend to combine lists
     return json.dumps(all_results_json)
@@ -649,10 +756,10 @@ def main_ui():
             st.header(f"Welcome to Lumiere, {st.session_state.username}.")
 
             # File upload
-            st.file_uploader("Upload files (text or images, max 4)", type=[
+            st.file_uploader("Upload files (text, images, or videos)", type=[
                 "py", "txt", "json", "js", "css", "html", "xml", "csv", "tsv", "yaml", "yml",
                 "ini", "md", "log", "bat", "sh", "java", "c", "cpp", "h", "hpp", "cs", "go",
-                "rb", "swift", "kt", "kts", "rs", "jpg", "jpeg", "png", "pdf", "docx"
+                "rb", "swift", "kt", "kts", "rs", "jpg", "jpeg", "png", "pdf", "docx", "mp4", "avi", "mov"
             ], key="file_uploader", accept_multiple_files=True, on_change=handle_file_upload)
 
             create_button = st.button("➕", on_click=create_new_conversation)
