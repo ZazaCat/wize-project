@@ -15,6 +15,10 @@ import docx
 import tiktoken
 from bs4 import BeautifulSoup
 from requests.utils import default_headers
+import aiohttp
+from bs4 import BeautifulSoup
+import re
+import asyncio
 
 INITIAL_MESSAGE = {"role": "assistant", "content": "Hello! How can I help you today?"}
 
@@ -533,35 +537,40 @@ def omniplex_search(query):
         print(f"Error: {response.status_code} - {response.text}")
         return []
 
-def omniplex_scrape(urls):
-    url = "https://omniplex.ai/api/scrape"
-    params = {
-        'urls': ",".join(urls)
-    }
-    headers = {
-        'User-Agent': "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36",
-        'authority': "omniplex.ai",
-        'accept-language': "en-PH,en-US;q=0.9,en;q=0.8",
-        'content-type': "application/json",
-        'origin': "https://omniplex.ai",
-        'referer': "https://omniplex.ai/chat/Wk3rQUxprd",
-        'sec-ch-ua': "\"Not-A.Brand\";v=\"99\", \"Chromium\";v=\"124\"",
-        'sec-ch-ua-mobile': "?1",
-        'sec-ch-ua-platform': "\"Android\"",
-        'sec-fetch-dest': "empty",
-        'sec-fetch-mode': "cors",
-        'sec-fetch-site': "same-origin",
-        'Cookie': "_ga=GA1.1.1059292211.1715883464; _clck=fw8ekm%7C2%7Cflx%7C0%7C1597; _ga_4L0TGM4R80=GS1.1.1716182640.5.1.1716184046.0.0.0; _clsk=z2swc6%7C1716184064563%7C9%7C1%7Cu.clarity.ms%2Fcollect"
-    }
-    response = requests.post(url, params=params, headers=headers)
+# ... (Remove omniplex_scrape function)
 
-    if response.status_code == 200:
-        return response.text
-    else:
-        print(f"Error: {response.status_code} - {response.text}")
+async def scrape_text(url: str) -> str:
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url) as response:
+                if response.status != 200:
+                    raise Exception(f"HTTP error! status: {response.status}")
+                html = await response.text()
+                text = extract_body_text(html)
+                return text
+    except Exception as e:
+        print(f"Error fetching URL {url}:", e)
         return ""
 
-def scrape_and_process_results(queries, max_results_per_query):
+def extract_body_text(html: str) -> str:
+    soup = BeautifulSoup(html, 'html.parser')
+    body = soup.find('body')
+    if body:
+        for script_or_style in body(['script', 'style']):
+            script_or_style.decompose()
+        text = re.sub(r'\s+', ' ', body.get_text()).strip()
+        return text
+    return ""
+
+async def scrape_urls(urls):
+    scraping_tasks = []
+    for url in urls:
+        scraping_tasks.append(scrape_text(url))
+    
+    results = await asyncio.gather(*scraping_tasks)
+    return results
+
+async def scrape_and_process_results(queries, max_results_per_query):
     all_results_json = []
     num_queries = len(queries)
     if num_queries == 3:
@@ -574,18 +583,16 @@ def scrape_and_process_results(queries, max_results_per_query):
     for query_idx, query in enumerate(queries):
         urls = omniplex_search(query)
         if urls:
-            scraped_data = omniplex_scrape(urls[:max_results_per_query])
+            scraped_data = await scrape_urls(urls[:max_results_per_query])
             results_json = []
-            for idx, url in enumerate(urls[:max_results_per_query], start=1):
+            for idx, url, content in zip(range(1, max_results_per_query + 1), urls[:max_results_per_query], scraped_data):
                 results_json.append({
                     "index": idx + query_idx * max_results_per_query,
                     "url": url,
-                    "content": scraped_data  # Assuming omniplex_scrape returns text for each URL
+                    "content": content
                 })
-            all_results_json.extend(results_json)  # Use extend to combine lists
+            all_results_json.extend(results_json)
     return json.dumps(all_results_json)
-
-initialize_session_state()
 
 def generate_title(prompt):
     url = "https://omniplex.ai/api/chat"
@@ -656,6 +663,8 @@ def main_ui():
             ], key="file_uploader", accept_multiple_files=True, on_change=handle_file_upload)
 
             create_button = st.button("➕", on_click=create_new_conversation)
+
+            
 
             with st.expander("History"):
                 for convo in list(st.session_state.conversations.keys()):
