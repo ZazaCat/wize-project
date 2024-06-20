@@ -572,11 +572,11 @@ async def scrape_and_process_results(queries, max_results_per_query):
     all_results_json = []
     num_queries = len(queries)
     if num_queries == 3:
-        max_results_per_query = 2  # Top 1 result for each query if there are 3 queries
+        max_results_per_query = 3  # Top 1 result for each query if there are 3 queries
     elif num_queries == 2:
-        max_results_per_query = 3  # Top 2 results for each query if there are 2 queries
+        max_results_per_query = 4  # Top 2 results for each query if there are 2 queries
     else:
-        max_results_per_query = 4  # Top 3 results for single query
+        max_results_per_query = 5  # Top 3 results for single query
 
     for query_idx, query in enumerate(queries):
         urls = omniplex_search(query)
