@@ -537,6 +537,8 @@ def omniplex_search(query):
         print(f"Error: {response.status_code} - {response.text}")
         return []
 
+# ... (Remove omniplex_scrape function)
+
 async def scrape_text(url: str) -> str:
     try:
         async with aiohttp.ClientSession() as session:
